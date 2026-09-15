@@ -1,0 +1,35 @@
+## .NET
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+*.user
+*.suo
+*.userprefs
+project.lock.json
+artifacts/
+
+## Test results
+[Tt]est[Rr]esult*/
+*.trx
+*.coverage
+coverage/
+*.opencover.xml
+
+## IDE
+.vs/
+.vscode/
+.idea/
+*.swp
+
+## OS
+.DS_Store
+Thumbs.db
+
+## Local config
+appsettings.Local.json
+*.db
+*.db-shm
+*.db-wal

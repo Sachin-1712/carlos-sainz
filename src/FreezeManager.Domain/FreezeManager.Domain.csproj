@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>FreezeManager.Domain</RootNamespace>
+    <Description>Pure domain model for race-weekend change freeze management. No I/O, no framework dependencies.</Description>
+  </PropertyGroup>
+
+</Project>

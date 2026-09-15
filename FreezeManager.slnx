@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/FreezeManager.Domain/FreezeManager.Domain.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/FreezeManager.Domain.Tests/FreezeManager.Domain.Tests.csproj" />
+  </Folder>
+</Solution>
