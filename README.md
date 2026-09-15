@@ -1,5 +1,7 @@
 # Race Weekend Change Freeze Manager
 
+[![CI](https://github.com/Sachin-1712/carlos-sainz/actions/workflows/ci.yml/badge.svg?branch=claude/amazing-hamilton-jqb41y)](https://github.com/Sachin-1712/carlos-sainz/actions/workflows/ci.yml)
+
 An IT change-management system in which **the race calendar is a first-class scheduling
 constraint**.
 
@@ -52,12 +54,35 @@ Built in phases. Current state:
 | Phase | Scope | Status |
 | --- | --- | --- |
 | 0 | Repository scaffold, CI | Done |
-| 1 | Domain: race calendar model, freeze engine, test suite | In progress |
+| 1 | Domain: race calendar model, freeze engine, test suite | Done |
 | 2 | Persistence, calendar ingestion (seeded + live provider) | Not started |
 | 3 | API: change request lifecycle and freeze gate | Not started |
 | 4 | Approval chains, emergency override, audit hash chain | Not started |
 | 5 | Blazor front end | Not started |
 | 6 | Continual-improvement metrics, ADRs, demo data | Not started |
+
+## What the tests prove
+
+The domain suite is 62 tests with no mocks, no clock and no I/O. Each one is a statement about the
+domain, and these are the ones worth reading:
+
+- Back-to-back races leave a 65-hour window for trackside services and nothing more.
+- A triple header has no gap long enough for a four-day change, so the engine pushes it past all
+  three rounds rather than offering a window that does not fit.
+- A sprint weekend's two parc ferme windows open a gap for the race engineers, not for IT: the
+  trackside freeze spans the whole weekend regardless.
+- A session delayed forty-five minutes by a red flag drags its freeze out with it, instead of
+  thawing on the published timetable while the cars are still running.
+- A Saturday-night race in Las Vegas keeps a European factory frozen into Sunday morning, which is
+  what catches anyone reasoning in circuit-local days.
+- The same weekend described in UTC, US central time and Japan standard time produces byte-identical
+  freeze windows.
+- An event whose parc ferme times have not been published yet falls back to the last session end,
+  failing safe rather than quietly dropping the freeze because one field was missing.
+- A change that spans a freeze is blocked, never silently trimmed to fit; a change that ends exactly
+  as a freeze begins is allowed.
+- A service with a long enough load-in lead sees back-to-backs merge into one continuous freeze,
+  because reporting two windows with a fictional gap between them would be a lie.
 
 ## Architecture
 
