@@ -1,0 +1,17 @@
+{
+  "disclaimer": "Illustrative service catalogue for a portfolio project. Names are generic; owners are role titles, not people.",
+  "services": [
+    { "key": "garage-network",      "name": "Garage network",                  "tier": "Trackside",   "owner": "Trackside IT Lead" },
+    { "key": "telemetry-ingest",    "name": "Telemetry ingest",                "tier": "Trackside",   "owner": "Trackside IT Lead" },
+    { "key": "pit-wall-comms",      "name": "Pit wall communications",         "tier": "Trackside",   "owner": "Trackside IT Lead" },
+    { "key": "timing-feed",         "name": "Timing feed",                     "tier": "Trackside",   "owner": "Trackside IT Lead" },
+    { "key": "mission-control",     "name": "Mission control",                 "tier": "RaceSupport", "owner": "Head of Race Support" },
+    { "key": "strategy-tooling",    "name": "Strategy tooling",                "tier": "RaceSupport", "owner": "Head of Race Support" },
+    { "key": "simulator",           "name": "Driver-in-loop simulator",        "tier": "RaceSupport", "owner": "Simulation Lead" },
+    { "key": "data-pipeline",       "name": "Race data pipeline",              "tier": "RaceSupport", "owner": "Head of Race Support" },
+    { "key": "email",               "name": "Email and calendaring",           "tier": "Corporate",   "owner": "IT Service Desk Manager" },
+    { "key": "hr-system",           "name": "HR system",                       "tier": "Corporate",   "owner": "IT Service Desk Manager" },
+    { "key": "finance-erp",         "name": "Finance ERP",                     "tier": "Corporate",   "owner": "IT Service Desk Manager" },
+    { "key": "intranet",            "name": "Intranet",                        "tier": "Corporate",   "owner": "IT Service Desk Manager" }
+  ]
+}
