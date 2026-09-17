@@ -6,6 +6,12 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <!--
+      A warning that only shows on a clean build is a warning nobody sees: incremental builds do not
+      re-run analysers, so local runs report zero while a fresh clone or CI reports one. Failing the
+      build is the only setting that makes the count honest.
+    -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
   </PropertyGroup>
 

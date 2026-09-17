@@ -223,7 +223,7 @@ public class FreezeCalculatorTests
         var calculator = new FreezeCalculator(Weekends.Calendar(Weekends.Sprint(1, T)));
 
         Assert.True(calculator.Evaluate(ServiceTier.Trackside, T.AddHours(24)).IsFrozen);
-        Assert.Single(calculator.WindowsFor(ServiceTier.Trackside).Where(w => !w.IsAdvisory));
+        Assert.Single(calculator.WindowsFor(ServiceTier.Trackside), w => !w.IsAdvisory);
     }
 
     [Fact]
