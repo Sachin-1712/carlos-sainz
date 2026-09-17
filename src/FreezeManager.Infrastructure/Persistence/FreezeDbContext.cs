@@ -20,6 +20,10 @@ public sealed class FreezeDbContext : DbContext
 
     public DbSet<CalendarSyncRunRecord> CalendarSyncRuns => Set<CalendarSyncRunRecord>();
 
+    public DbSet<ChangeRequestRecord> ChangeRequests => Set<ChangeRequestRecord>();
+
+    public DbSet<ChangeAffectedServiceRecord> ChangeAffectedServices => Set<ChangeAffectedServiceRecord>();
+
     /// <summary>
     /// SQLite stores timestamps as text and hands them back with <c>Kind = Unspecified</c>. Every
     /// timestamp in this store is UTC, so stamp the kind back on the way out.
@@ -78,6 +82,33 @@ public sealed class FreezeDbContext : DbContext
         {
             entity.ToTable("CalendarSyncRuns");
             entity.Property(r => r.Provider).HasMaxLength(200).IsRequired();
+        });
+
+        modelBuilder.Entity<ChangeRequestRecord>(entity =>
+        {
+            entity.ToTable("ChangeRequests");
+            entity.HasIndex(c => c.Reference).IsUnique();
+            entity.HasIndex(c => new { c.ReferenceYear, c.ReferenceSequence }).IsUnique();
+            entity.HasIndex(c => c.State);
+            entity.Property(c => c.Reference).HasMaxLength(32).IsRequired();
+            entity.Property(c => c.Title).HasMaxLength(300).IsRequired();
+            entity.Property(c => c.RequestedBy).HasMaxLength(200).IsRequired();
+            entity.Property(c => c.Description).HasMaxLength(4000);
+            entity.Property(c => c.ImplementationPlan).HasMaxLength(8000);
+            entity.Property(c => c.BackoutPlan).HasMaxLength(8000);
+
+            entity.HasMany(c => c.AffectedServices)
+                .WithOne()
+                .HasForeignKey(s => s.ChangeRequestId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ChangeAffectedServiceRecord>(entity =>
+        {
+            entity.ToTable("ChangeAffectedServices");
+            entity.HasIndex(s => new { s.ChangeRequestId, s.ServiceKey }).IsUnique();
+            entity.HasIndex(s => s.ServiceKey);
+            entity.Property(s => s.ServiceKey).HasMaxLength(100).IsRequired();
         });
     }
 }

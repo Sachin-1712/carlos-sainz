@@ -206,3 +206,134 @@ freeze windows themselves are instants and are unaffected (decision 5).
 
 **Say:** "The engine doesn't need the zone; only the display does. So a miss is loud, not
 dangerous."
+
+---
+
+## Phase 3 — change lifecycle and the freeze gate
+
+### 15. The lifecycle is a table, not a chain of conditionals
+
+**Chose:** `ChangeStateMachine` holds a dictionary of state to permitted next states. Every
+transition goes through it.
+
+**Why:** the legal moves are then readable in one place, testable exhaustively, and extensible by
+editing data. A test walks the table from `Draft` and asserts every state in the enum is reachable,
+so adding a state without wiring it up fails the build.
+
+**If wrong:** the rules end up spread across the call sites that enforce them, and the twentieth one
+disagrees with the first.
+
+**Say:** "The lifecycle is data. Adding the approval states is an edit to a dictionary, not a
+refactor."
+
+### 16. The approval states are deliberately absent, not forgotten
+
+**Chose:** no `Approved` or `Rejected` state yet. `Submitted` goes straight to `Scheduled`.
+
+**Why:** dead enum values that nothing can reach are worse than an honest gap -- they read as
+finished work. The states insert between `Submitted` and `Scheduled` when the approval chain lands.
+
+**If wrong:** a reviewer assumes approvals exist and are broken, rather than that they are not built.
+
+**Say:** "The gap is the shape of the next phase. I would rather it be visibly missing than fake."
+
+### 17. A draft may be incomplete; a submission may not
+
+**Chose:** the constructor requires only a title, a requester and a window. The description,
+implementation plan and backout plan are required at `EnsureReadyForSubmission`, not at creation.
+
+**Why:** people start writing a change before they have solved it. Demanding a backout plan to open
+a draft means the draft gets written in a text file instead, and the tool loses sight of it.
+
+**If wrong:** either the tool is unusable for early thinking, or incomplete changes reach approvers.
+
+**Say:** "Validation belongs at the moment of the promise, not the moment of the first keystroke."
+
+### 18. Completeness is checked before the freeze gate
+
+**Chose:** on a gated transition, `EnsureReadyForSubmission` runs first; only then does the gate.
+
+**Why:** telling someone their window clashes with a race weekend when they have not written a
+backout plan is answering a question they have not asked yet. Order the feedback the way the person
+will fix it.
+
+**If wrong:** people reschedule around a freeze twice before finding out the real blocker was a
+missing field.
+
+**Say:** "Answer the first problem first."
+
+### 19. A refusal always carries the way forward
+
+**Chose:** a blocked submit or schedule returns 409 with the conflicting windows, the next window
+long enough for the change, and a `retryWith` object -- a complete request that would succeed.
+
+**Why:** this is the whole argument of the project. A control that only says no gets worked around,
+and a control that is worked around also stops telling you the truth about what is being changed.
+Taking the compliant path is copying one object into a second call.
+
+**If wrong:** the freeze becomes an obstacle people route around rather than a constraint they plan
+against, and the audit trail quietly becomes fiction.
+
+**Say:** "The refusal is the cheapest moment to make the right thing easy. It costs one extra field."
+
+### 20. The suggested retry keeps the change's own duration
+
+**Chose:** `retryWith` proposes the suggested window's start plus the change's existing duration,
+not the whole gap.
+
+**Why:** the open window after a race weekend can be ten days long. Expanding a four-hour change to
+fill it would be nonsense, and would make the next change look like it has nowhere to go.
+
+**If wrong:** every accepted suggestion books out the entire gap and the calendar congests itself.
+
+**Say:** "It moves the change. It does not resize it."
+
+### 21. An unknown service fails closed
+
+**Chose:** if any affected service is not in the catalogue, the gate returns `UnknownService` and the
+transition is refused.
+
+**Why:** an unrecognised name is not evidence that a change is safe. The alternative -- ignoring
+services it cannot resolve -- means a typo silently buys an exemption from the freeze.
+
+**If wrong:** a mistyped service name deploys during parc ferme and the control records that it was
+fine.
+
+**Say:** "A name I do not recognise is a reason to stop, not a reason to continue."
+
+### 22. A change is judged by every tier it touches
+
+**Chose:** the gate collects the tiers of all affected services and assesses against their merged
+windows. `FreezeCalculator` gained tier-collection overloads for this.
+
+**Why:** a change touching mission control and telemetry ingest faces the trackside constraint, not
+whichever service happened to be listed first. Merging blocking and advisory separately (decision 4)
+means a corporate service in the list cannot soften a trackside freeze.
+
+**If wrong:** the constraint depends on array order, which is the kind of bug that passes review.
+
+**Say:** "The strictest tier wins, and it wins by construction rather than by sorting."
+
+### 23. Which transitions are gated lives in the table too
+
+**Chose:** `ChangeStateMachine.RequiresFreezeCheck` says which moves need the gate. The service asks
+the table; it does not decide for itself.
+
+**Why:** a new gated transition cannot then be added without the gate following it. A test asserts
+every gated transition is also a legal one.
+
+**If wrong:** someone adds a path to `Scheduled` that skips the freeze check, and nothing catches it.
+
+**Say:** "The state machine owns both questions: can this move happen, and does it need checking."
+
+### 24. Emergency changes are not special yet, and the tests say so
+
+**Chose:** `ChangeType.Emergency` exists and is gated identically to everything else. A test asserts
+that an emergency change inside a freeze is blocked.
+
+**Why:** the override is the approval chain's job. Letting emergencies through now, before there is
+anyone to approve them or any record that they happened, would be a hole rather than a feature.
+
+**If wrong:** the classification becomes a free bypass for anyone willing to tick the box.
+
+**Say:** "Emergency is a routing decision, not a permission. The permission comes with the chain."

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <RootNamespace>FreezeManager.Api</RootNamespace>
+    <Description>Minimal API over the freeze manager: change request lifecycle and the freeze gate.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../FreezeManager.Infrastructure/FreezeManager.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="FreezeManager.Api.Tests" />
+  </ItemGroup>
+
+</Project>

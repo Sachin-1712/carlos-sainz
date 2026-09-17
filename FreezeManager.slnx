@@ -2,9 +2,11 @@
   <Folder Name="/src/">
     <Project Path="src/FreezeManager.Domain/FreezeManager.Domain.csproj" />
     <Project Path="src/FreezeManager.Infrastructure/FreezeManager.Infrastructure.csproj" />
+    <Project Path="src/FreezeManager.Api/FreezeManager.Api.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/FreezeManager.Domain.Tests/FreezeManager.Domain.Tests.csproj" />
     <Project Path="tests/FreezeManager.Infrastructure.Tests/FreezeManager.Infrastructure.Tests.csproj" />
+    <Project Path="tests/FreezeManager.Api.Tests/FreezeManager.Api.Tests.csproj" />
   </Folder>
 </Solution>

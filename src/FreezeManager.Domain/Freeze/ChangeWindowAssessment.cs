@@ -18,16 +18,17 @@ public sealed class ChangeWindowAssessment
 {
     public ChangeWindowAssessment(
         ChangeWindowVerdict verdict,
-        ServiceTier tier,
+        IEnumerable<ServiceTier> tiers,
         DateTimeOffset requestedStartUtc,
         DateTimeOffset requestedEndUtc,
         IEnumerable<FreezeWindow> conflicts,
         OpenWindow? suggestedAlternative)
     {
+        ArgumentNullException.ThrowIfNull(tiers);
         ArgumentNullException.ThrowIfNull(conflicts);
 
         Verdict = verdict;
-        Tier = tier;
+        Tiers = tiers.Distinct().OrderBy(t => t).ToArray();
         RequestedStartUtc = requestedStartUtc.ToUniversalTime();
         RequestedEndUtc = requestedEndUtc.ToUniversalTime();
         Conflicts = conflicts.ToArray();
@@ -36,7 +37,8 @@ public sealed class ChangeWindowAssessment
 
     public ChangeWindowVerdict Verdict { get; }
 
-    public ServiceTier Tier { get; }
+    /// <summary>Every tier the change touches, strictest first.</summary>
+    public IReadOnlyList<ServiceTier> Tiers { get; }
 
     public DateTimeOffset RequestedStartUtc { get; }
 

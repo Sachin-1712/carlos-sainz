@@ -35,20 +35,42 @@ public sealed class FreezeCalculator
     /// Blocking and advisory windows are merged separately, so an advisory window overlapping a
     /// blocking one cannot widen the blocking one, and a blocking window cannot be softened.
     /// </remarks>
-    public IReadOnlyList<FreezeWindow> WindowsFor(ServiceTier tier)
-    {
-        var policy = _policies.For(tier);
+    public IReadOnlyList<FreezeWindow> WindowsFor(ServiceTier tier) => WindowsFor(new[] { tier });
 
-        if (policy is null)
+    /// <summary>
+    /// Every freeze window across a set of tiers, merged into one canonical set.
+    /// </summary>
+    /// <remarks>
+    /// A change usually touches more than one service, and those services need not share a tier.
+    /// Merging across all of their tiers gives the constraint the change actually faces, rather
+    /// than the constraint of whichever service happened to be listed first.
+    /// </remarks>
+    public IReadOnlyList<FreezeWindow> WindowsFor(IEnumerable<ServiceTier> tiers)
+    {
+        ArgumentNullException.ThrowIfNull(tiers);
+
+        var distinct = tiers.Distinct().ToArray();
+
+        if (distinct.Length == 0)
         {
             return Array.Empty<FreezeWindow>();
         }
 
         var raw = new List<FreezeWindow>();
 
-        foreach (var raceEvent in _calendar.ActiveEvents)
+        foreach (var tier in distinct)
         {
-            raw.AddRange(policy.WindowsFor(raceEvent));
+            var policy = _policies.For(tier);
+
+            if (policy is null)
+            {
+                continue;
+            }
+
+            foreach (var raceEvent in _calendar.ActiveEvents)
+            {
+                raw.AddRange(policy.WindowsFor(raceEvent));
+            }
         }
 
         var blocking = FreezeWindowMerger.Merge(raw.Where(w => !w.IsAdvisory));
@@ -102,17 +124,26 @@ public sealed class FreezeCalculator
     public ChangeWindowAssessment AssessChangeWindow(
         ServiceTier tier,
         DateTimeOffset startUtc,
+        DateTimeOffset endUtc) => AssessChangeWindow(new[] { tier }, startUtc, endUtc);
+
+    /// <summary>Whether a change touching several tiers may run in the proposed window.</summary>
+    public ChangeWindowAssessment AssessChangeWindow(
+        IEnumerable<ServiceTier> tiers,
+        DateTimeOffset startUtc,
         DateTimeOffset endUtc)
     {
+        ArgumentNullException.ThrowIfNull(tiers);
+
         if (endUtc <= startUtc)
         {
             throw new ArgumentException("A change window must end after it starts.", nameof(endUtc));
         }
 
+        var tierList = tiers.Distinct().ToArray();
         var start = startUtc.ToUniversalTime();
         var end = endUtc.ToUniversalTime();
 
-        var conflicts = WindowsFor(tier)
+        var conflicts = WindowsFor(tierList)
             .Where(w => w.Overlaps(start, end))
             .OrderBy(w => w.StartUtc)
             .ToArray();
@@ -120,7 +151,7 @@ public sealed class FreezeCalculator
         if (conflicts.Length == 0)
         {
             return new ChangeWindowAssessment(
-                ChangeWindowVerdict.Allowed, tier, start, end, conflicts, null);
+                ChangeWindowVerdict.Allowed, tierList, start, end, conflicts, null);
         }
 
         var blocking = conflicts.Where(w => !w.IsAdvisory).ToArray();
@@ -128,13 +159,13 @@ public sealed class FreezeCalculator
         if (blocking.Length == 0)
         {
             return new ChangeWindowAssessment(
-                ChangeWindowVerdict.AllowedWithWarning, tier, start, end, conflicts, null);
+                ChangeWindowVerdict.AllowedWithWarning, tierList, start, end, conflicts, null);
         }
 
-        var alternative = NextOpenWindow(tier, start, end - start);
+        var alternative = NextOpenWindow(tierList, start, end - start);
 
         return new ChangeWindowAssessment(
-            ChangeWindowVerdict.BlockedByFreeze, tier, start, end, blocking, alternative);
+            ChangeWindowVerdict.BlockedByFreeze, tierList, start, end, blocking, alternative);
     }
 
     /// <summary>
@@ -146,8 +177,17 @@ public sealed class FreezeCalculator
         ServiceTier tier,
         DateTimeOffset afterUtc,
         TimeSpan minimumDuration,
+        TimeSpan? horizon = null) => NextOpenWindow(new[] { tier }, afterUtc, minimumDuration, horizon);
+
+    /// <summary>The next period long enough for a change, open across every tier it touches.</summary>
+    public OpenWindow? NextOpenWindow(
+        IEnumerable<ServiceTier> tiers,
+        DateTimeOffset afterUtc,
+        TimeSpan minimumDuration,
         TimeSpan? horizon = null)
     {
+        ArgumentNullException.ThrowIfNull(tiers);
+
         if (minimumDuration <= TimeSpan.Zero)
         {
             throw new ArgumentOutOfRangeException(
@@ -158,7 +198,7 @@ public sealed class FreezeCalculator
         var limit = after + (horizon ?? DefaultHorizon);
 
         // WindowsFor has already merged these, so they neither overlap nor touch.
-        var blocking = WindowsFor(tier)
+        var blocking = WindowsFor(tiers)
             .Where(w => !w.IsAdvisory && w.EndUtc > after && w.StartUtc < limit)
             .OrderBy(w => w.StartUtc)
             .ToArray();

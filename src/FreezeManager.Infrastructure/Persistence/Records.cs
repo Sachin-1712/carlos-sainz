@@ -1,4 +1,5 @@
 using FreezeManager.Domain.Calendar;
+using FreezeManager.Domain.Changes;
 using FreezeManager.Domain.Services;
 
 namespace FreezeManager.Infrastructure.Persistence;
@@ -147,4 +148,108 @@ public sealed class CalendarSyncRunRecord
     public int EventsSkipped { get; set; }
 
     public string? Message { get; set; }
+}
+
+public sealed class ChangeRequestRecord
+{
+    public int Id { get; set; }
+
+    /// <summary>Denormalised form of the reference, e.g. CHG-2026-0001. Unique, and how it is looked up.</summary>
+    public string Reference { get; set; } = string.Empty;
+
+    public int ReferenceYear { get; set; }
+
+    public int ReferenceSequence { get; set; }
+
+    public string Title { get; set; } = string.Empty;
+
+    public string RequestedBy { get; set; } = string.Empty;
+
+    public string? Description { get; set; }
+
+    public string? ImplementationPlan { get; set; }
+
+    public string? BackoutPlan { get; set; }
+
+    public ChangeType Type { get; set; }
+
+    public ChangeImpact Impact { get; set; }
+
+    public ChangeLikelihood Likelihood { get; set; }
+
+    public DateTime RequestedStartUtc { get; set; }
+
+    public DateTime RequestedEndUtc { get; set; }
+
+    public ChangeState State { get; set; }
+
+    public DateTime CreatedAtUtc { get; set; }
+
+    public DateTime UpdatedAtUtc { get; set; }
+
+    public List<ChangeAffectedServiceRecord> AffectedServices { get; set; } = new();
+
+    public ChangeRequest ToDomain() => new(
+        ChangeReference.Create(ReferenceYear, ReferenceSequence),
+        Title,
+        RequestedBy,
+        Type,
+        Impact,
+        Likelihood,
+        AffectedServices.Select(s => s.ServiceKey),
+        UtcTime.ToOffset(RequestedStartUtc),
+        UtcTime.ToOffset(RequestedEndUtc),
+        UtcTime.ToOffset(CreatedAtUtc),
+        Description,
+        ImplementationPlan,
+        BackoutPlan,
+        State,
+        UtcTime.ToOffset(UpdatedAtUtc));
+
+    /// <summary>Writes a domain aggregate back over this row.</summary>
+    public void ApplyFrom(ChangeRequest change)
+    {
+        ArgumentNullException.ThrowIfNull(change);
+
+        Reference = change.Reference.ToString();
+        ReferenceYear = change.Reference.Year;
+        ReferenceSequence = change.Reference.Sequence;
+        Title = change.Title;
+        RequestedBy = change.RequestedBy;
+        Description = change.Description;
+        ImplementationPlan = change.ImplementationPlan;
+        BackoutPlan = change.BackoutPlan;
+        Type = change.Type;
+        Impact = change.Impact;
+        Likelihood = change.Likelihood;
+        RequestedStartUtc = UtcTime.FromOffset(change.RequestedStartUtc);
+        RequestedEndUtc = UtcTime.FromOffset(change.RequestedEndUtc);
+        State = change.State;
+        CreatedAtUtc = UtcTime.FromOffset(change.CreatedAtUtc);
+        UpdatedAtUtc = UtcTime.FromOffset(change.UpdatedAtUtc);
+
+        var desired = change.AffectedServiceKeys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var existing in AffectedServices.ToList())
+        {
+            if (!desired.Remove(existing.ServiceKey))
+            {
+                AffectedServices.Remove(existing);
+            }
+        }
+
+        foreach (var key in desired)
+        {
+            AffectedServices.Add(new ChangeAffectedServiceRecord { ServiceKey = key });
+        }
+    }
+}
+
+public sealed class ChangeAffectedServiceRecord
+{
+    public int Id { get; set; }
+
+    public int ChangeRequestId { get; set; }
+
+    public string ServiceKey { get; set; } = string.Empty;
 }

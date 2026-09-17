@@ -60,6 +60,106 @@ namespace FreezeManager.Infrastructure.Persistence.Migrations
                     b.ToTable("CalendarSyncRuns", (string)null);
                 });
 
+            modelBuilder.Entity("FreezeManager.Infrastructure.Persistence.ChangeAffectedServiceRecord", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ChangeRequestId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ServiceKey")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ServiceKey");
+
+                    b.HasIndex("ChangeRequestId", "ServiceKey")
+                        .IsUnique();
+
+                    b.ToTable("ChangeAffectedServices", (string)null);
+                });
+
+            modelBuilder.Entity("FreezeManager.Infrastructure.Persistence.ChangeRequestRecord", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("BackoutPlan")
+                        .HasMaxLength(8000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Impact")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ImplementationPlan")
+                        .HasMaxLength(8000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Likelihood")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Reference")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ReferenceSequence")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ReferenceYear")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("RequestedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("RequestedEndUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("RequestedStartUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("State")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Reference")
+                        .IsUnique();
+
+                    b.HasIndex("State");
+
+                    b.HasIndex("ReferenceYear", "ReferenceSequence")
+                        .IsUnique();
+
+                    b.ToTable("ChangeRequests", (string)null);
+                });
+
             modelBuilder.Entity("FreezeManager.Infrastructure.Persistence.ParcFermeWindowRecord", b =>
                 {
                     b.Property<int>("Id")
@@ -215,6 +315,15 @@ namespace FreezeManager.Infrastructure.Persistence.Migrations
                     b.ToTable("Sessions", (string)null);
                 });
 
+            modelBuilder.Entity("FreezeManager.Infrastructure.Persistence.ChangeAffectedServiceRecord", b =>
+                {
+                    b.HasOne("FreezeManager.Infrastructure.Persistence.ChangeRequestRecord", null)
+                        .WithMany("AffectedServices")
+                        .HasForeignKey("ChangeRequestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("FreezeManager.Infrastructure.Persistence.ParcFermeWindowRecord", b =>
                 {
                     b.HasOne("FreezeManager.Infrastructure.Persistence.RaceEventRecord", null)
@@ -231,6 +340,11 @@ namespace FreezeManager.Infrastructure.Persistence.Migrations
                         .HasForeignKey("RaceEventId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("FreezeManager.Infrastructure.Persistence.ChangeRequestRecord", b =>
+                {
+                    b.Navigation("AffectedServices");
                 });
 
             modelBuilder.Entity("FreezeManager.Infrastructure.Persistence.RaceEventRecord", b =>

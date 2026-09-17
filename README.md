@@ -57,7 +57,7 @@ improvement metrics and anything AI-assisted are deliberately out of scope.
 | 0 | Repository scaffold, CI | Done |
 | 1 | Domain: race calendar model, freeze engine, test suite | Done |
 | 2 | Persistence, calendar ingestion (live provider with seeded fallback) | Done |
-| 3 | API: change request lifecycle and freeze gate | Not started |
+| 3 | API: change request lifecycle and freeze gate | Done |
 | 4 | Approval chains, emergency override, audit hash chain | Not started |
 | 5 | Minimal single-page freeze dashboard | Not started |
 
@@ -106,6 +106,16 @@ domain, and these are the ones worth reading:
   as a freeze begins is allowed.
 - A service with a long enough load-in lead sees back-to-backs merge into one continuous freeze,
   because reporting two windows with a fictional gap between them would be a lie.
+- An unknown service name fails the gate closed, so a typo cannot buy an exemption from a freeze.
+- A change touching both a corporate service and a trackside one is judged by the trackside freeze;
+  the advisory tier cannot soften it.
+- A blocked change is handed a window it would actually fit in: where the 65-hour gap between
+  back-to-backs is too short, the suggestion skips past both rounds rather than offering a gap that
+  would fail again.
+- An emergency change inside a freeze is still blocked, because the override belongs to the approval
+  chain that does not exist yet.
+- Every state in the lifecycle is reachable from `Draft`, so a state added to the enum without being
+  wired into the transition table fails the build.
 
 ## Architecture
 
@@ -113,11 +123,12 @@ domain, and these are the ones worth reading:
 src/
   FreezeManager.Domain/          pure C#, zero dependencies -- freeze engine, state machine
   FreezeManager.Infrastructure/  EF Core over SQLite, calendar providers, sync
-  FreezeManager.Api/             minimal API, OpenAPI                   (phase 3)
+  FreezeManager.Api/             minimal API over the lifecycle and the gate
   FreezeManager.Web/             Blazor                                 (phase 5)
 tests/
   FreezeManager.Domain.Tests/    fast, deterministic, no I/O
   FreezeManager.Infrastructure.Tests/  in-memory SQLite through the real migrations
+  FreezeManager.Api.Tests/       the real HTTP surface, in-memory database
 data/seed/                       unverified calendar, illustrative service catalogue
 docs/decisions.md                the design decisions, one entry each
 ```
@@ -138,6 +149,85 @@ windows a person entered, and skips any event an admin has pinned.
 The upstream API publishes session start times only. Durations and parc ferme are filled from
 `IngestionDefaults` and every derived parc ferme window is stamped as derived, so a person can tell
 a rule's output from a published fact.
+
+## The freeze gate
+
+The gate is the point of the project, so it is worth seeing what it returns. Submitting a change
+whose window falls inside a race weekend gets `409` and this:
+
+```json
+{
+  "title": "Blocked by a change freeze",
+  "detail": "Blocked by 1 freeze window(s); next window opens 2026-09-26 18:00Z",
+  "reference": "CHG-2026-0001",
+  "conflicts": [
+    {
+      "startUtc": "2026-09-22T08:30:00+00:00",
+      "endUtc": "2026-09-26T18:00:00+00:00",
+      "reason": "Trackside freeze, load-in to tear-down (Round 17 (Baku City Circuit))",
+      "isAdvisory": false,
+      "rounds": [17]
+    }
+  ],
+  "suggestedWindow": { "startUtc": "2026-09-26T18:00:00+00:00", "durationHours": 255.5 },
+  "retryWith": {
+    "method": "POST",
+    "path": "/api/changes/CHG-2026-0001/submit",
+    "body": {
+      "requestedStartUtc": "2026-09-26T18:00:00+00:00",
+      "requestedEndUtc": "2026-09-26T22:00:00+00:00"
+    }
+  }
+}
+```
+
+`retryWith` is a complete request that would succeed. Posting it back unmodified moves the change
+into the next window and submits it, so the compliant path costs one copy rather than a
+recalculation. Note that it keeps the change's own four hours rather than expanding to fill the
+255-hour gap.
+
+A refusal that does not say what to do instead is the thing people route around, and a control that
+is routed around also stops telling you the truth about what is being changed.
+
+### Endpoints
+
+| | |
+| --- | --- |
+| `POST /api/changes` | Raise a draft. A draft may be incomplete. |
+| `GET /api/changes?state=&affectedService=` | List, filtered. |
+| `GET` `PUT` `DELETE` `/api/changes/{ref}` | Fetch, replace, delete. Only drafts can be edited or deleted. |
+| `POST /api/changes/{ref}/submit` | Runs the freeze gate. Accepts an optional replacement window. |
+| `POST /api/changes/{ref}/schedule` | Runs the freeze gate. Accepts an optional replacement window. |
+| `POST /api/changes/{ref}/{withdraw,start,complete,fail,roll-back,close,cancel}` | The rest of the lifecycle. |
+| `GET /api/freeze/status?serviceKey=&at=` | Is this service frozen, and for how long. |
+| `GET /api/freeze/next-window?serviceKey=&hours=` | When could a change of this length run. |
+| `GET /api/freeze/windows?serviceKey=` | Every window for a service, merged. |
+| `GET /api/calendar/{season}` | The stored calendar, with each event's provenance. |
+| `POST /api/calendar/{season}/sync` | Pull from the provider and reconcile. |
+
+### Lifecycle
+
+```
+Draft -> Submitted -> Scheduled -> Implementing -> Implemented -> Closed
+   |          |            |             |
+   |          +-> Draft    +-> Submitted +-> Failed -> RolledBack -> Closed
+   |                                            |
+   +-> Cancelled <-------------------+          +-> Draft
+```
+
+The freeze gate runs on `Draft -> Submitted` and `Submitted -> Scheduled`. Illegal moves are
+rejected with `409` and a list of the states the change may actually move to. Approval states are
+deliberately absent: they insert between `Submitted` and `Scheduled` in phase 4.
+
+## Running it
+
+```bash
+dotnet run --project src/FreezeManager.Api
+```
+
+On first run it applies migrations, seeds the service catalogue, and pulls the calendar -- live if
+the API is reachable, from the bundled seed if not. Either way the attempt is recorded and readable
+at `GET /api/calendar/sync-runs`, including the reason for a fallback.
 
 ## Build
 
