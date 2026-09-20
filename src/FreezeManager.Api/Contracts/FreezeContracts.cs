@@ -54,14 +54,15 @@ public sealed record FreezeGateResponse
 
     public required IReadOnlyList<FreezeWindowResponse> Conflicts { get; init; }
 
-    public OpenWindowResponse? SuggestedWindow { get; init; }
+    /// <summary>An open window, not a freeze window: where the change may run instead.</summary>
+    public OpenWindowResponse? SuggestedOpenWindow { get; init; }
 
     public static FreezeGateResponse From(FreezeGateDecision decision) => new()
     {
         Outcome = decision.Outcome.ToString(),
         Tiers = decision.Tiers.Select(t => t.ToString()).ToArray(),
         Conflicts = decision.Conflicts.Select(FreezeWindowResponse.From).ToArray(),
-        SuggestedWindow = OpenWindowResponse.From(decision.SuggestedWindow)
+        SuggestedOpenWindow = OpenWindowResponse.From(decision.SuggestedOpenWindow)
     };
 }
 
@@ -81,9 +82,12 @@ public sealed record FreezeStatusResponse
 
     public string? Reason { get; init; }
 
-    public FreezeWindowResponse? ActiveWindow { get; init; }
+    /// <summary>The freeze window in force right now, if any.</summary>
+    public FreezeWindowResponse? ActiveFreezeWindow { get; init; }
 
-    public FreezeWindowResponse? NextWindow { get; init; }
+    /// <summary>The next freeze window to begin. Not to be confused with the next OPEN window,
+    /// which is what /api/freeze/next-open-window returns.</summary>
+    public FreezeWindowResponse? NextFreezeWindow { get; init; }
 
     public double? HoursUntilThaw { get; init; }
 

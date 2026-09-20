@@ -107,10 +107,13 @@ public sealed class CalendarSyncService
         await _db.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation(
-            "Calendar sync for season {Season} from {Provider}: {Added} added, {Updated} updated, {Skipped} pinned, {Warnings} warnings.",
-            season, fetched.ProviderName, added, updated, skipped, fetched.Warnings.Count);
+            "Calendar sync for season {Season} from {Provider}: {Added} added, {Updated} updated, {Skipped} pinned, {Warnings} warnings, unmapped circuits: {Unmapped}.",
+            season, fetched.ProviderName, added, updated, skipped, fetched.Warnings.Count,
+            fetched.UnmappedCircuitIds.Count == 0 ? "none" : string.Join(", ", fetched.UnmappedCircuitIds));
 
-        return new CalendarSyncResult(season, fetched.ProviderName, fetched.Source, added, updated, skipped, fetched.Warnings);
+        return new CalendarSyncResult(
+            season, fetched.ProviderName, fetched.Source, added, updated, skipped,
+            fetched.Warnings, fetched.UnmappedCircuitIds);
     }
 
     private static void Apply(RaceEventRecord current, RaceEventRecord incoming)
@@ -182,6 +185,7 @@ public sealed class CalendarSyncResult
         int updated,
         int skippedPinned,
         IReadOnlyList<string> warnings,
+        IReadOnlyList<string> unmappedCircuitIds,
         string? error = null)
     {
         Season = season;
@@ -191,11 +195,12 @@ public sealed class CalendarSyncResult
         Updated = updated;
         SkippedPinned = skippedPinned;
         Warnings = warnings;
+        UnmappedCircuitIds = unmappedCircuitIds;
         Error = error;
     }
 
     public static CalendarSyncResult Failed(int season, string providerName, string error) =>
-        new(season, providerName, null, 0, 0, 0, Array.Empty<string>(), error);
+        new(season, providerName, null, 0, 0, 0, Array.Empty<string>(), Array.Empty<string>(), error);
 
     public int Season { get; }
 
@@ -210,6 +215,9 @@ public sealed class CalendarSyncResult
     public int SkippedPinned { get; }
 
     public IReadOnlyList<string> Warnings { get; }
+
+    /// <summary>Circuits with no time zone mapping. Each one is a row to add to the lookup table.</summary>
+    public IReadOnlyList<string> UnmappedCircuitIds { get; }
 
     public string? Error { get; }
 

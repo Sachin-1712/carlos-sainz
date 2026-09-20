@@ -19,6 +19,7 @@ public static class ErgastCalendarMapper
 
         var races = response.MRData?.RaceTable?.Races ?? new List<ErgastRace>();
         var warnings = new List<string>();
+        var unmappedCircuitIds = new List<string>();
         var events = new List<RaceEventRecord>();
 
         foreach (var race in races)
@@ -50,6 +51,7 @@ public static class ErgastCalendarMapper
 
             if (!CircuitTimeZones.TryResolve(circuitId, out var timeZoneId))
             {
+                unmappedCircuitIds.Add(circuitId ?? "(none published)");
                 warnings.Add($"Round {round}: no time zone mapping for circuit '{circuitId ?? "?"}'; using {timeZoneId}.");
             }
 
@@ -74,7 +76,7 @@ public static class ErgastCalendarMapper
             });
         }
 
-        return new CalendarFetchResult(providerName, CalendarSource.LiveUpstream, events, warnings);
+        return new CalendarFetchResult(providerName, CalendarSource.LiveUpstream, events, warnings, unmappedCircuitIds);
     }
 
     private static void AddSession(

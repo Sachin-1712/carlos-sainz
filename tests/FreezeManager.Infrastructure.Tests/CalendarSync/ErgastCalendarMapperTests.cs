@@ -75,13 +75,32 @@ public class ErgastCalendarMapperTests
     }
 
     [Fact]
-    public void An_unknown_circuit_falls_back_to_utc_and_says_so()
+    public void A_circuit_the_table_does_not_know_falls_back_to_utc_and_is_named_on_its_own()
     {
-        var result = MapSample();
-        var madrid = result.Events.Single(e => e.Round == 4);
+        // The fixture uses a deliberately unknown identifier. The fix for a real one is a row in
+        // CircuitTimeZones, so the identifier has to be readable without parsing the warning prose.
+        var result = ErgastCalendarMapper.Map(
+            2026, Fixtures.ErgastSample(withUnknownCircuit: true), IngestionDefaults.Standard, FetchedAt, "test");
 
-        Assert.Equal(CircuitTimeZones.Unknown, madrid.LocalTimeZoneId);
-        Assert.Contains(result.Warnings, w => w.Contains("madring") && w.Contains("time zone"));
+        var unknown = result.Events.Single(e => e.Round == 4);
+
+        Assert.Equal(CircuitTimeZones.Unknown, unknown.LocalTimeZoneId);
+        Assert.Equal(new[] { "not_a_real_circuit" }, result.UnmappedCircuitIds);
+        Assert.Contains(result.Warnings, w => w.Contains("not_a_real_circuit") && w.Contains("time zone"));
+    }
+
+    [Fact]
+    public void A_calendar_whose_circuits_are_all_known_reports_none_unmapped()
+    {
+        Assert.Empty(MapSample().UnmappedCircuitIds);
+    }
+
+    [Fact]
+    public void Madrid_resolves_because_it_joined_the_calendar_for_2026()
+    {
+        var madrid = MapSample().Events.Single(e => e.Round == 4);
+
+        Assert.Equal("Europe/Madrid", madrid.LocalTimeZoneId);
     }
 
     [Fact]

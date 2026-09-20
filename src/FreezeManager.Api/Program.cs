@@ -22,7 +22,8 @@ var connectionString = builder.Configuration.GetConnectionString("Freeze") ?? "D
 
 builder.Services.AddSingleton(new SeasonSettings(season));
 builder.Services.AddSingleton(TimeProvider.System);
-builder.Services.AddDbContext<FreezeDbContext>(options => options.UseSqlite(connectionString));
+builder.Services.AddDbContext<FreezeDbContext>(options =>
+    options.UseSqlite(connectionString, FreezeDbOptions.Apply));
 
 builder.Services.AddScoped<CalendarRepository>();
 builder.Services.AddScoped<FreezeContextFactory>(sp =>

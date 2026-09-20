@@ -9,7 +9,7 @@ public sealed class FreezeDbContextFactory : IDesignTimeDbContextFactory<FreezeD
     public FreezeDbContext CreateDbContext(string[] args)
     {
         var options = new DbContextOptionsBuilder<FreezeDbContext>()
-            .UseSqlite("Data Source=freeze-design-time.db")
+            .UseSqlite("Data Source=freeze-design-time.db", FreezeDbOptions.Apply)
             .Options;
 
         return new FreezeDbContext(options);

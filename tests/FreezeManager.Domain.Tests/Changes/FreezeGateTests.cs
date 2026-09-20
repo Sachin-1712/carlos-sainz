@@ -51,7 +51,7 @@ public class FreezeGateTests
         Assert.Equal(FreezeGateOutcome.Allowed, decision.Outcome);
         Assert.True(decision.IsAllowed);
         Assert.Empty(decision.Conflicts);
-        Assert.Null(decision.SuggestedWindow);
+        Assert.Null(decision.SuggestedOpenWindow);
     }
 
     [Fact]
@@ -64,9 +64,9 @@ public class FreezeGateTests
         Assert.NotEmpty(decision.Conflicts);
 
         // The refusal always carries the way forward.
-        Assert.NotNull(decision.SuggestedWindow);
-        Assert.Equal(T.AddHours(55), decision.SuggestedWindow!.StartUtc);
-        Assert.True(decision.SuggestedWindow.Duration >= TimeSpan.FromHours(4));
+        Assert.NotNull(decision.SuggestedOpenWindow);
+        Assert.Equal(T.AddHours(55), decision.SuggestedOpenWindow!.StartUtc);
+        Assert.True(decision.SuggestedOpenWindow.Duration >= TimeSpan.FromHours(4));
     }
 
     [Fact]
@@ -80,10 +80,10 @@ public class FreezeGateTests
         var decision = gate.Evaluate(change, Catalogue);
 
         Assert.Equal(FreezeGateOutcome.Blocked, decision.Outcome);
-        Assert.Equal(T.AddHours(223), decision.SuggestedWindow!.StartUtc);
+        Assert.Equal(T.AddHours(223), decision.SuggestedOpenWindow!.StartUtc);
 
         // Taking the suggestion actually works.
-        var rescheduled = Change(decision.SuggestedWindow.StartUtc, TimeSpan.FromHours(72), "telemetry-ingest");
+        var rescheduled = Change(decision.SuggestedOpenWindow.StartUtc, TimeSpan.FromHours(72), "telemetry-ingest");
         Assert.True(gate.Evaluate(rescheduled, Catalogue).IsAllowed);
     }
 
@@ -148,7 +148,7 @@ public class FreezeGateTests
 
         // The override that lets an emergency through arrives with the approval chain.
         Assert.Equal(FreezeGateOutcome.Blocked, decision.Outcome);
-        Assert.NotNull(decision.SuggestedWindow);
+        Assert.NotNull(decision.SuggestedOpenWindow);
     }
 
     [Fact]
@@ -180,7 +180,7 @@ public class FreezeGateTests
         var decision = gate.Evaluate(change, Catalogue);
 
         Assert.Equal(FreezeGateOutcome.Blocked, decision.Outcome);
-        Assert.Null(decision.SuggestedWindow);
+        Assert.Null(decision.SuggestedOpenWindow);
         Assert.Contains("no window", decision.ToString(), StringComparison.OrdinalIgnoreCase);
     }
 }

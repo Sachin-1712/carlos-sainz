@@ -337,3 +337,55 @@ anyone to approve them or any record that they happened, would be a hole rather 
 **If wrong:** the classification becomes a free bypass for anyone willing to tick the box.
 
 **Say:** "Emergency is a routing decision, not a permission. The permission comes with the chain."
+
+---
+
+## Review fixes before phase 4
+
+### 25. No field in the API is called just "window"
+
+**Chose:** a period when work is blocked is always a `freezeWindow`; a period when work is allowed is
+always an `openWindow`. `/api/freeze/status` returns `activeFreezeWindow` and `nextFreezeWindow`; a
+rejection carries `suggestedOpenWindow`; the search endpoint is `/api/freeze/next-open-window`
+returning `nextOpenWindow`. The domain types were renamed to match.
+
+**Why:** the status response previously had `nextWindow` (the next *freeze*) while an endpoint named
+`next-window` returned the next *open slot*. Same words, opposite meanings, one of them about to be
+consumed by a UI. In C# the type annotation disambiguated; in JSON there are no types.
+
+**If wrong:** a front end shows "you can deploy from 22 September" on the exact date the freeze
+starts. The bug is invisible in review because both readings are grammatical.
+
+**Say:** "Two opposite concepts had one word between them. Naming the type in the field name is free
+and makes the wrong reading impossible."
+
+### 26. Unmapped circuits are their own field, not prose in a warning
+
+**Chose:** `CalendarFetchResult` and the sync response carry `unmappedCircuitIds`, alongside the
+human-readable warning that already existed.
+
+**Why:** the fix for an unmapped circuit is a row in `CircuitTimeZones`. Anything the operator has to
+*act* on should be readable without parsing a sentence -- a warning count told us something was
+wrong but not what to add, which cost a round trip to find out.
+
+**If wrong:** unmapped circuits keep silently falling back to UTC because finding out which ones
+means reading logs.
+
+**Say:** "A diagnostic should name the thing you have to change, in a field, not in a sentence."
+
+### 27. Query splitting is configured once, not remembered at each call site
+
+**Chose:** `FreezeDbOptions.Apply` sets `QuerySplittingBehavior.SplitQuery` wherever the context is
+configured -- the app, the design-time factory, and both test hosts.
+
+**Why:** a race event has both sessions and parc ferme windows, and loading both in one query
+multiplies the rows together. That is EF Core's `MultipleCollectionIncludeWarning`. Fixing it with
+`AsSplitQuery()` at each call site works until someone writes the next query; fixing it in the
+options means they cannot forget. Every affected query has a deterministic `OrderBy`, which is what
+split queries need to stay consistent.
+
+**If wrong:** the row count for a season grows as sessions times parc ferme windows, and a warning
+the repository claims not to have is printed at every startup.
+
+**Say:** "It was a real warning about a real cartesian product. I fixed it where it cannot come
+back rather than where it happened to appear."

@@ -17,7 +17,8 @@ public sealed class CalendarFetchResult
         string providerName,
         CalendarSource source,
         IEnumerable<RaceEventRecord> events,
-        IEnumerable<string>? warnings = null)
+        IEnumerable<string>? warnings = null,
+        IEnumerable<string>? unmappedCircuitIds = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(providerName);
         ArgumentNullException.ThrowIfNull(events);
@@ -26,6 +27,10 @@ public sealed class CalendarFetchResult
         Source = source;
         Events = events.OrderBy(e => e.Round).ToArray();
         Warnings = (warnings ?? Array.Empty<string>()).ToArray();
+        UnmappedCircuitIds = (unmappedCircuitIds ?? Array.Empty<string>())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     public string ProviderName { get; }
@@ -36,4 +41,13 @@ public sealed class CalendarFetchResult
 
     /// <summary>Things that were skipped, defaulted or guessed. Surfaced in the sync history.</summary>
     public IReadOnlyList<string> Warnings { get; }
+
+    /// <summary>
+    /// Circuit identifiers with no time zone mapping, which fell back to UTC.
+    /// </summary>
+    /// <remarks>
+    /// A field of its own rather than only a line in <see cref="Warnings"/>: the fix is to add a row
+    /// to the lookup table, so the thing to add should be readable without parsing prose.
+    /// </remarks>
+    public IReadOnlyList<string> UnmappedCircuitIds { get; }
 }

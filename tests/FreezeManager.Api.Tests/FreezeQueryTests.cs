@@ -51,12 +51,29 @@ public class FreezeQueryTests : IClassFixture<FreezeApiFactory>
     }
 
     [Fact]
-    public async Task The_next_window_endpoint_answers_when_a_change_of_a_given_length_could_run()
+    public async Task The_next_open_window_endpoint_answers_when_a_change_of_a_given_length_could_run()
     {
-        var response = await _client.GetAsync($"/api/freeze/next-window?serviceKey=telemetry-ingest&hours=4&after={Iso(T)}");
+        var response = await _client.GetAsync($"/api/freeze/next-open-window?serviceKey=telemetry-ingest&hours=4&after={Iso(T)}");
 
-        var window = (await response.ReadJsonAsync()).GetProperty("suggestedWindow");
+        var window = (await response.ReadJsonAsync()).GetProperty("nextOpenWindow");
         Assert.Equal(T.AddHours(55), window.GetProperty("startUtc").GetDateTimeOffset());
+    }
+
+    [Fact]
+    public async Task Freeze_status_and_the_open_window_endpoint_use_names_that_cannot_be_confused()
+    {
+        // The status response talks about FREEZE windows; the other endpoint about an OPEN one.
+        // Guards the rename: a UI built on "nextWindow" would have read the opposite meaning.
+        var status = await (await _client.GetAsync($"/api/freeze/status?serviceKey=telemetry-ingest&at={Iso(T)}")).ReadJsonAsync();
+
+        Assert.True(status.TryGetProperty("activeFreezeWindow", out _));
+        Assert.False(status.TryGetProperty("nextWindow", out _));
+        Assert.False(status.TryGetProperty("activeWindow", out _));
+
+        var open = await (await _client.GetAsync($"/api/freeze/next-open-window?serviceKey=telemetry-ingest&hours=4&after={Iso(T)}")).ReadJsonAsync();
+
+        Assert.True(open.TryGetProperty("nextOpenWindow", out _));
+        Assert.False(open.TryGetProperty("suggestedWindow", out _));
     }
 
     [Fact]

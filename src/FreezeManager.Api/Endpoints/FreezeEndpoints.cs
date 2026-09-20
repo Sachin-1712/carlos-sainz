@@ -36,8 +36,8 @@ public static class FreezeEndpoints
                 IsFrozen = evaluation.IsFrozen,
                 IsAdvisory = evaluation.IsAdvisory,
                 Reason = evaluation.Reason,
-                ActiveWindow = evaluation.ActiveWindow is null ? null : FreezeWindowResponse.From(evaluation.ActiveWindow),
-                NextWindow = evaluation.NextWindow is null ? null : FreezeWindowResponse.From(evaluation.NextWindow),
+                ActiveFreezeWindow = evaluation.ActiveFreezeWindow is null ? null : FreezeWindowResponse.From(evaluation.ActiveFreezeWindow),
+                NextFreezeWindow = evaluation.NextFreezeWindow is null ? null : FreezeWindowResponse.From(evaluation.NextFreezeWindow),
                 HoursUntilThaw = evaluation.TimeUntilThaw is { } thaw ? Math.Round(thaw.TotalHours, 2) : null,
                 HoursUntilNextFreeze = evaluation.TimeUntilNextFreeze is { } next ? Math.Round(next.TotalHours, 2) : null
             });
@@ -60,9 +60,9 @@ public static class FreezeEndpoints
             var windows = context.Calculator.WindowsFor(tier);
             return Results.Ok(windows.Select(FreezeWindowResponse.From).ToArray());
         })
-        .WithSummary("Every freeze window for a service across the season, merged.");
+        .WithSummary("Every FREEZE window for a service across the season, merged.");
 
-        group.MapGet("/next-window", async (
+        group.MapGet("/next-open-window", async (
             string serviceKey,
             double? hours,
             DateTimeOffset? after,
@@ -81,11 +81,14 @@ public static class FreezeEndpoints
 
             var window = context.Calculator.NextOpenWindow(tier, after ?? time.GetUtcNow(), duration);
 
-            return window is null
-                ? Results.Ok(new { serviceKey, requestedHours = duration.TotalHours, suggestedWindow = (OpenWindowResponse?)null })
-                : Results.Ok(new { serviceKey, requestedHours = duration.TotalHours, suggestedWindow = OpenWindowResponse.From(window) });
+            return Results.Ok(new
+            {
+                serviceKey,
+                requestedHours = duration.TotalHours,
+                nextOpenWindow = OpenWindowResponse.From(window)
+            });
         })
-        .WithSummary("The next window long enough to change a service.");
+        .WithSummary("The next OPEN window long enough to change a service.");
 
         group.MapGet("/services", async (
             FreezeContextFactory factory,

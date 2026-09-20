@@ -14,9 +14,15 @@ internal static class Fixtures
 
     public static string SeedServicesPath => Path("Seed", "services.json");
 
-    public static ErgastResponse ErgastSample()
+    public static ErgastResponse ErgastSample(bool withUnknownCircuit = false)
     {
         var json = File.ReadAllText(Path("Fixtures", "ergast-sample.json"));
+
+        if (withUnknownCircuit)
+        {
+            json = json.Replace("\"madring\"", "\"not_a_real_circuit\"", StringComparison.Ordinal);
+        }
+
         return JsonSerializer.Deserialize<ErgastResponse>(json, JsonOptions)
             ?? throw new InvalidOperationException("Fixture did not deserialise.");
     }

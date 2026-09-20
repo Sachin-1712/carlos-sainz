@@ -25,13 +25,13 @@ public sealed class FreezeGateDecision
         FreezeGateOutcome outcome,
         IReadOnlyList<ServiceTier> tiers,
         IReadOnlyList<FreezeWindow> conflicts,
-        OpenWindow? suggestedWindow,
+        OpenWindow? suggestedOpenWindow,
         IReadOnlyList<string> unknownServiceKeys)
     {
         Outcome = outcome;
         Tiers = tiers;
         Conflicts = conflicts;
-        SuggestedWindow = suggestedWindow;
+        SuggestedOpenWindow = suggestedOpenWindow;
         UnknownServiceKeys = unknownServiceKeys;
     }
 
@@ -47,7 +47,7 @@ public sealed class FreezeGateDecision
     /// The next window long enough for the change. Present whenever the gate blocks and such a
     /// window exists inside the horizon; null when none does, which is itself worth saying.
     /// </summary>
-    public OpenWindow? SuggestedWindow { get; }
+    public OpenWindow? SuggestedOpenWindow { get; }
 
     public IReadOnlyList<string> UnknownServiceKeys { get; }
 
@@ -85,8 +85,8 @@ public sealed class FreezeGateDecision
         FreezeGateOutcome.Allowed => "Allowed",
         FreezeGateOutcome.AllowedWithWarning => $"Allowed with {Conflicts.Count} advisory window(s)",
         FreezeGateOutcome.UnknownService => $"Unknown service(s): {string.Join(", ", UnknownServiceKeys)}",
-        _ => SuggestedWindow is null
+        _ => SuggestedOpenWindow is null
             ? $"Blocked by {Conflicts.Count} freeze window(s); no window found inside the horizon"
-            : $"Blocked by {Conflicts.Count} freeze window(s); next window opens {SuggestedWindow.StartUtc:yyyy-MM-dd HH:mm}Z"
+            : $"Blocked by {Conflicts.Count} freeze window(s); next window opens {SuggestedOpenWindow.StartUtc:yyyy-MM-dd HH:mm}Z"
     };
 }

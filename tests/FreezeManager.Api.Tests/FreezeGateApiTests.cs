@@ -49,7 +49,7 @@ public class FreezeGateApiTests : IClassFixture<FreezeApiFactory>
         Assert.False(conflicts[0].GetProperty("isAdvisory").GetBoolean());
 
         // And the refusal carries the next window that actually fits.
-        var suggested = body.GetProperty("suggestedWindow");
+        var suggested = body.GetProperty("suggestedOpenWindow");
         Assert.Equal(T.AddHours(55), suggested.GetProperty("startUtc").GetDateTimeOffset());
         Assert.True(suggested.GetProperty("durationHours").GetDouble() >= 4);
     }
@@ -93,7 +93,7 @@ public class FreezeGateApiTests : IClassFixture<FreezeApiFactory>
         Assert.Equal(TimeSpan.FromHours(4), end - start);
 
         // The open window itself is far longer than four hours.
-        Assert.True(body.GetProperty("suggestedWindow").GetProperty("durationHours").GetDouble() > 100);
+        Assert.True(body.GetProperty("suggestedOpenWindow").GetProperty("durationHours").GetDouble() > 100);
     }
 
     [Fact]

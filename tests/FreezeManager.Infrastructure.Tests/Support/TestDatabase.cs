@@ -18,7 +18,7 @@ internal sealed class TestDatabase : IDisposable
         _connection.Open();
 
         Options = new DbContextOptionsBuilder<FreezeDbContext>()
-            .UseSqlite(_connection)
+            .UseSqlite(_connection, FreezeDbOptions.Apply)
             .Options;
 
         using var db = CreateContext();

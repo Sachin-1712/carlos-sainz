@@ -69,7 +69,11 @@ public static class CalendarEndpoints
                     result.Added,
                     result.Updated,
                     result.SkippedPinned,
-                    result.Warnings
+                    result.Warnings,
+
+                    // Each entry is a row to add to CircuitTimeZones. Named here so the fix does not
+                    // require reading the warning prose.
+                    unmappedCircuitIds = result.UnmappedCircuitIds
                 })
                 : Results.Problem(
                     title: "Calendar sync failed",

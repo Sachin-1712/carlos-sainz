@@ -32,8 +32,11 @@ public sealed record BlockedByFreezeProblem
 
     public required IReadOnlyList<FreezeWindowResponse> Conflicts { get; init; }
 
-    /// <summary>The next window long enough for this change. Null when none exists in the horizon.</summary>
-    public OpenWindowResponse? SuggestedWindow { get; init; }
+    /// <summary>
+    /// An OPEN window long enough for this change -- the opposite of the freeze windows listed in
+    /// <see cref="Conflicts"/>. Null when none exists inside the horizon.
+    /// </summary>
+    public OpenWindowResponse? SuggestedOpenWindow { get; init; }
 
     /// <summary>A request that would succeed. Null when there is no window to suggest.</summary>
     public RetryInstruction? RetryWith { get; init; }
@@ -44,7 +47,7 @@ public sealed record BlockedByFreezeProblem
         FreezeGateDecision decision,
         string path)
     {
-        var suggested = OpenWindowResponse.From(decision.SuggestedWindow);
+        var suggested = OpenWindowResponse.From(decision.SuggestedOpenWindow);
 
         return new BlockedByFreezeProblem
         {
@@ -54,8 +57,8 @@ public sealed record BlockedByFreezeProblem
             RequestedState = requestedState.ToString(),
             Tiers = decision.Tiers.Select(t => t.ToString()).ToArray(),
             Conflicts = decision.Conflicts.Select(FreezeWindowResponse.From).ToArray(),
-            SuggestedWindow = suggested,
-            RetryWith = suggested is null || decision.SuggestedWindow is null
+            SuggestedOpenWindow = suggested,
+            RetryWith = suggested is null || decision.SuggestedOpenWindow is null
                 ? null
                 : new RetryInstruction
                 {
@@ -63,11 +66,11 @@ public sealed record BlockedByFreezeProblem
                     Path = path,
                     Body = new ChangeWindowInput
                     {
-                        RequestedStartUtc = decision.SuggestedWindow.StartUtc,
+                        RequestedStartUtc = decision.SuggestedOpenWindow.StartUtc,
 
                         // The suggested window can be far longer than the change needs; keep the
                         // change's own duration rather than expanding it to fill the gap.
-                        RequestedEndUtc = decision.SuggestedWindow.StartUtc + change.RequestedDuration
+                        RequestedEndUtc = decision.SuggestedOpenWindow.StartUtc + change.RequestedDuration
                     }
                 }
         };

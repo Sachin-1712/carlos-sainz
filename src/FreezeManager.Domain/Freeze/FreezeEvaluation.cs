@@ -9,16 +9,16 @@ public sealed class FreezeEvaluation
         DateTimeOffset evaluatedAtUtc,
         ServiceTier tier,
         string policyName,
-        FreezeWindow? activeWindow,
-        FreezeWindow? nextWindow)
+        FreezeWindow? activeFreezeWindow,
+        FreezeWindow? nextFreezeWindow)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(policyName);
 
         EvaluatedAtUtc = evaluatedAtUtc.ToUniversalTime();
         Tier = tier;
         PolicyName = policyName;
-        ActiveWindow = activeWindow;
-        NextWindow = nextWindow;
+        ActiveFreezeWindow = activeFreezeWindow;
+        NextFreezeWindow = nextFreezeWindow;
     }
 
     public DateTimeOffset EvaluatedAtUtc { get; }
@@ -27,29 +27,32 @@ public sealed class FreezeEvaluation
 
     public string PolicyName { get; }
 
-    /// <summary>The window in force right now, if any.</summary>
-    public FreezeWindow? ActiveWindow { get; }
+    /// <summary>The freeze window in force right now, if any.</summary>
+    public FreezeWindow? ActiveFreezeWindow { get; }
 
-    /// <summary>The next window to start after <see cref="EvaluatedAtUtc"/>, if any.</summary>
-    public FreezeWindow? NextWindow { get; }
+    /// <summary>
+    /// The next FREEZE window to begin after <see cref="EvaluatedAtUtc"/>, if any. Not the next open
+    /// window -- that is <see cref="FreezeCalculator.NextOpenWindow(Services.ServiceTier, DateTimeOffset, TimeSpan, TimeSpan?)"/>.
+    /// </summary>
+    public FreezeWindow? NextFreezeWindow { get; }
 
     /// <summary>Changes are blocked.</summary>
-    public bool IsFrozen => ActiveWindow is not null && !ActiveWindow.IsAdvisory;
+    public bool IsFrozen => ActiveFreezeWindow is not null && !ActiveFreezeWindow.IsAdvisory;
 
     /// <summary>A window is in force but only warns.</summary>
-    public bool IsAdvisory => ActiveWindow is not null && ActiveWindow.IsAdvisory;
+    public bool IsAdvisory => ActiveFreezeWindow is not null && ActiveFreezeWindow.IsAdvisory;
 
     /// <summary>No window in force at all.</summary>
-    public bool IsOpen => ActiveWindow is null;
+    public bool IsOpen => ActiveFreezeWindow is null;
 
-    public string? Reason => ActiveWindow?.Reason;
+    public string? Reason => ActiveFreezeWindow?.Reason;
 
     /// <summary>How long until the current window lifts. Null when nothing is in force.</summary>
     public TimeSpan? TimeUntilThaw
     {
         get
         {
-            var active = ActiveWindow;
+            var active = ActiveFreezeWindow;
             return active is null ? null : active.EndUtc - EvaluatedAtUtc;
         }
     }
@@ -59,9 +62,9 @@ public sealed class FreezeEvaluation
     {
         get
         {
-            var next = NextWindow;
+            var next = NextFreezeWindow;
 
-            if (ActiveWindow is not null || next is null)
+            if (ActiveFreezeWindow is not null || next is null)
             {
                 return null;
             }
@@ -74,11 +77,11 @@ public sealed class FreezeEvaluation
     {
         if (IsFrozen)
         {
-            return $"{Tier}: FROZEN until {ActiveWindow!.EndUtc:yyyy-MM-dd HH:mm}Z -- {ActiveWindow.Reason}";
+            return $"{Tier}: FROZEN until {ActiveFreezeWindow!.EndUtc:yyyy-MM-dd HH:mm}Z -- {ActiveFreezeWindow.Reason}";
         }
 
         return IsAdvisory
-            ? $"{Tier}: advisory -- {ActiveWindow!.Reason}"
+            ? $"{Tier}: advisory -- {ActiveFreezeWindow!.Reason}"
             : $"{Tier}: open";
     }
 }
