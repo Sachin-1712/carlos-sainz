@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using FreezeManager.Api.Endpoints;
+using FreezeManager.Domain.Calendar;
 using FreezeManager.Infrastructure.Audit;
 using FreezeManager.Infrastructure.CalendarSync;
 using FreezeManager.Infrastructure.CalendarSync.Seed;
@@ -7,8 +8,16 @@ using FreezeManager.Infrastructure.Changes;
 using FreezeManager.Infrastructure.Overrides;
 using FreezeManager.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using FreezeManager.Api.Components;
+using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Compose static web assets in every environment, not only Development. Without this, a fresh
+// clone running `dotnet run` (which defaults to Production) serves the page but 404s on
+// blazor.web.js, so the dashboard renders and then never wires up. No-ops once published, where
+// the assets are already copied into wwwroot.
+builder.WebHost.UseStaticWebAssets();
 
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
@@ -16,7 +25,23 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
 });
 
-builder.Services.AddOpenApi();
+builder.Services.AddRazorComponents().AddInteractiveServerComponents();
+builder.Services.AddOpenApi(options => options.AddDocumentTransformer((document, _, _) =>
+{
+    document.Info = new Microsoft.OpenApi.OpenApiInfo
+    {
+        Title = "Race Weekend Change Freeze Manager",
+        Version = "v1",
+        Description =
+            "An IT change-management API in which the race calendar is a first-class scheduling "
+            + "constraint. Submitting or scheduling a change runs the freeze gate; a refusal returns "
+            + "409 with the conflicting windows, the next open window, and a ready-to-send retry. "
+            + "Emergency overrides are attributable, time-boxed and approved, and everything is "
+            + "recorded in a hash-chained audit log that GET /api/audit/verify can check."
+    };
+
+    return Task.CompletedTask;
+}));
 builder.Services.AddProblemDetails();
 
 var season = builder.Configuration.GetValue("Freeze:Season", DateTime.UtcNow.Year);
@@ -83,11 +108,18 @@ builder.Services.AddHostedService<OverrideExpiryBackgroundService>();
 var app = builder.Build();
 
 app.UseStatusCodePages();
+app.UseAntiforgery();
 
-if (app.Environment.IsDevelopment())
-{
-    app.MapOpenApi();
-}
+// Browsable API documentation. Not gated behind Development: a reviewer cloning this repository
+// should get something clickable on the first run, which was the whole point of adding it.
+app.MapOpenApi();
+
+app.MapScalarApiReference(options => options
+    .WithTitle("Race Weekend Change Freeze Manager")
+    .WithTheme(ScalarTheme.BluePlanet)
+    .WithDefaultHttpClient(ScalarTarget.Shell, ScalarClient.Curl));
+
+app.MapStaticAssets();
 
 app.MapChangeEndpoints();
 app.MapApprovalEndpoints();
@@ -96,16 +128,22 @@ app.MapFreezeEndpoints();
 app.MapCalendarEndpoints();
 app.MapAuditEndpoints();
 
-app.MapGet("/", () => Results.Ok(new
+// The dashboard owns "/". A machine-readable index lives alongside it.
+app.MapGet("/api", () => Results.Ok(new
 {
     service = "Race Weekend Change Freeze Manager",
     season,
+    documentation = "/scalar/v1",
+    dashboard = "/",
     endpoints = new[]
     {
-        "/api/changes", "/api/freeze/status", "/api/calendar/{season}", "/api/audit", "/api/audit/verify"
+        "/api/changes", "/api/freeze/status", "/api/calendar/{season}",
+        "/api/calendar/{season}/completeness", "/api/audit", "/api/audit/verify"
     }
 }))
 .ExcludeFromDescription();
+
+app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 
 // Apply migrations and make sure there is a service catalogue and a calendar to reason about.
 // Skipped under test, where the fixture builds its own database and seeds what it needs.
@@ -162,6 +200,40 @@ internal static class StartupTasks
             logger.LogInformation(
                 "Calendar bootstrap for {Season} from {Provider}: {Added} added, {Warnings} warnings.",
                 season, result.ProviderName, result.Added, result.Warnings.Count);
+        }
+
+        await ReportCompletenessAsync(scope, logger, season);
+    }
+
+    /// <summary>
+    /// Says loudly at startup whether the calendar has holes in it.
+    /// </summary>
+    /// <remarks>
+    /// A round that never loaded is a weekend the engine believes is open. Nothing inside the engine
+    /// can fail safe for an event it has never seen, so the only defence is to say so where someone
+    /// will read it.
+    /// </remarks>
+    private static async Task ReportCompletenessAsync(IServiceScope scope, ILogger logger, int season)
+    {
+        var repository = scope.ServiceProvider.GetRequiredService<CalendarRepository>();
+        var report = CalendarCompleteness.Inspect(await repository.LoadSeasonAsync(season));
+
+        if (report.HasUnprotectedWeekends)
+        {
+            logger.LogWarning(
+                "CALENDAR INCOMPLETE for {Season}: rounds {Missing} are missing. Those weekends are "
+                + "NOT protected by a freeze. See GET /api/calendar/{Season}/completeness.",
+                season, string.Join(", ", report.MissingRounds), season);
+        }
+        else if (!report.IsComplete)
+        {
+            logger.LogWarning(
+                "Calendar for {Season} has {Count} incomplete round(s). See GET /api/calendar/{Season}/completeness.",
+                season, report.IncompleteRounds.Count, season);
+        }
+        else
+        {
+            logger.LogInformation("Calendar for {Season} is complete: {Rounds} rounds.", season, report.RoundsPresent);
         }
     }
 }

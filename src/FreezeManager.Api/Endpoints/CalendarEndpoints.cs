@@ -1,3 +1,4 @@
+using FreezeManager.Domain.Calendar;
 using FreezeManager.Infrastructure.CalendarSync;
 using FreezeManager.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -53,6 +54,56 @@ public static class CalendarEndpoints
         })
         .WithSummary("The stored calendar for a season, with each event's provenance.");
 
+        group.MapGet("/{season:int}/completeness", async (
+            int season,
+            int? expectedRounds,
+            CalendarRepository repository,
+            FreezeDbContext db,
+            CancellationToken cancellationToken) =>
+        {
+            var calendar = await repository.LoadSeasonAsync(season, cancellationToken);
+            var report = CalendarCompleteness.Inspect(calendar, expectedRounds);
+
+            // A round missing from the calendar has one of two causes, and they need different
+            // fixes. If the last sync reported dropping it, ingestion rejected it and the reason
+            // says why. If not, upstream never sent it.
+            var lastRun = await db.CalendarSyncRuns
+                .AsNoTracking()
+                .Where(r => r.Season == season && r.Succeeded)
+                .OrderByDescending(r => r.StartedAtUtc)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            var droppedByIngestion = lastRun?.SkippedRoundsJson is null
+                ? Array.Empty<SkippedRound>()
+                : System.Text.Json.JsonSerializer.Deserialize<SkippedRound[]>(lastRun.SkippedRoundsJson)
+                  ?? Array.Empty<SkippedRound>();
+
+            var droppedRounds = droppedByIngestion.Select(d => d.Round).ToHashSet();
+
+            return Results.Json(
+                new
+                {
+                    report.Season,
+                    report.IsComplete,
+                    report.RoundsPresent,
+                    report.HighestRound,
+                    report.MissingRounds,
+                    missingRoundCauses = report.MissingRounds.Select(round => new
+                    {
+                        round,
+                        cause = droppedRounds.Contains(round) ? "DroppedByIngestion" : "NotSentByUpstream",
+                        detail = droppedByIngestion.FirstOrDefault(d => d.Round == round)?.Reason
+                                 ?? "The last successful sync did not return this round at all."
+                    }),
+                    incompleteRounds = report.IncompleteRounds.Select(g => new { g.Round, g.Circuit, g.Problem }),
+                    droppedByIngestion,
+                    summary = report.ToString()
+                },
+                // A calendar with a hole in it is a finding, not a healthy 200.
+                statusCode: report.HasUnprotectedWeekends ? StatusCodes.Status409Conflict : StatusCodes.Status200OK);
+        })
+        .WithSummary("Check the stored calendar for missing or incomplete rounds, and say which cause applies.");
+
         group.MapPost("/{season:int}/sync", async (
             int season,
             CalendarSyncService sync,
@@ -73,7 +124,11 @@ public static class CalendarEndpoints
 
                     // Each entry is a row to add to CircuitTimeZones. Named here so the fix does not
                     // require reading the warning prose.
-                    unmappedCircuitIds = result.UnmappedCircuitIds
+                    unmappedCircuitIds = result.UnmappedCircuitIds,
+
+                    // Rounds upstream sent that could not be stored. A round missing from the
+                    // calendar and absent from here was never sent at all.
+                    skippedRounds = result.SkippedRounds
                 })
                 : Results.Problem(
                     title: "Calendar sync failed",

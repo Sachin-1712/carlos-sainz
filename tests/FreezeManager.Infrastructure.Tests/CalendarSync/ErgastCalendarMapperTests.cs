@@ -132,6 +132,32 @@ public class ErgastCalendarMapperTests
     }
 
     [Fact]
+    public void A_round_upstream_sent_but_ingestion_could_not_store_is_named_with_its_reason()
+    {
+        // Round 3 in the fixture has session dates but no published times. That is the difference
+        // between "upstream omits the round" and "ingestion dropped it", and the two need
+        // different fixes, so the result has to say which happened.
+        var result = MapSample();
+
+        var skipped = Assert.Single(result.SkippedRounds);
+
+        Assert.Equal(3, skipped.Round);
+        Assert.Equal("Japanese Grand Prix", skipped.RaceName);
+        Assert.Contains("published time", skipped.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void A_calendar_with_nothing_dropped_reports_no_skipped_rounds()
+    {
+        var response = Fixtures.ErgastSample();
+        response.MRData!.RaceTable!.Races!.RemoveAll(r => r.Round == "3");
+
+        var result = ErgastCalendarMapper.Map(2026, response, IngestionDefaults.Standard, FetchedAt, "test");
+
+        Assert.Empty(result.SkippedRounds);
+    }
+
+    [Fact]
     public void An_empty_response_maps_to_no_events_rather_than_failing()
     {
         var result = ErgastCalendarMapper.Map(2026, new ErgastResponse(), IngestionDefaults.Standard, FetchedAt, "test");

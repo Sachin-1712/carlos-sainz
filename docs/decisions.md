@@ -527,3 +527,96 @@ collision (decision 25), caught the same way -- by reading real output rather th
 
 **Say:** "Both facts are true: the gate refused, and it went ahead. The response states both rather
 than leaving the reader to reconcile them."
+
+---
+
+## Phase 5 — dashboard and browsable API
+
+### 37. A missing round is shouted about, because nothing inside the engine can fail safe for it
+
+**Chose:** `CalendarCompleteness` inspects the stored calendar for gaps. Startup logs a warning
+naming the missing rounds; `GET /api/calendar/{season}/completeness` returns **409** when a whole
+round is absent, and for each one says whether ingestion dropped it or upstream never sent it.
+`SkippedRounds` records the former with a reason, persisted on the sync run.
+
+**Why:** decision 3 makes missing data *within* an event fail safe by lengthening the freeze. Nothing
+equivalent is possible for an event the engine has never seen: a round that never loaded is simply a
+weekend on which everything looks deployable. The only defence is to say so where someone reads it.
+And the two causes need different fixes -- a dropped round is an ingestion bug, an absent one is an
+upstream gap -- so the diagnostic distinguishes them rather than leaving it to be guessed.
+
+**If wrong:** the tool reports "no freeze" for a race weekend and is confidently wrong, which is the
+one failure mode the whole project exists to prevent.
+
+**Say:** "Everything else fails safe by over-freezing. A missing round can't, so it gets shouted
+about instead -- and the message says which of the two causes it is."
+
+### 38. A cancelled round is not a hole
+
+**Chose:** completeness counts every round in the calendar, including cancelled ones. Only rounds
+absent from the calendar entirely are reported missing.
+
+**Why:** a cancelled event is a deliberate exclusion that somebody recorded. Treating it as a gap
+would cry wolf on the one signal that has to stay trustworthy.
+
+**If wrong:** every cancelled race raises a false alarm and people learn to ignore the alarm.
+
+**Say:** "Recorded-and-excluded is not the same as never-loaded. Only the second is a problem."
+
+### 39. The compliant window is on screen before anyone types a date
+
+**Chose:** ticking a service recalculates the next open window for its tiers immediately, with a
+button that moves the form to it. A refusal replaces that suggestion with its own, so there are
+never two competing buttons.
+
+**Why:** this is decision 19 carried into the interface. A refusal that arrives *after* someone has
+filled in a form teaches them the tool is an obstacle; a suggestion that arrives *before* they type
+a date makes the compliant path the lazy one.
+
+**If wrong:** the UI becomes a way to discover you were wrong, rather than a way to be right first
+time.
+
+**Say:** "The cheapest moment to make the right thing easy is before the person has committed to the
+wrong one."
+
+### 40. The page can be asked about an instant other than now
+
+**Chose:** an "evaluate at" control, also reachable as `?at=`, moves the whole page to a chosen
+instant.
+
+**Why:** "what is frozen next Friday?" is the planning question, and the engine is already a pure
+function of an instant (decision 7). Exposing that costs a query parameter, and it is also what
+makes a live freeze demonstrable rather than a thing you have to wait for a race weekend to see.
+
+**If wrong:** the tool only answers questions about the present, which is the least useful tense for
+change planning.
+
+**Say:** "The engine never assumed 'now'. The page shouldn't either."
+
+### 41. Status colour is never the only signal
+
+**Chose:** frozen, advisory and open each carry an icon and a word as well as a colour, in the table
+and in the timeline legend.
+
+**Why:** the status palette's warning step sits below 3:1 contrast on a light surface by design, and
+colour alone excludes colourblind readers regardless of contrast. Icon plus label is the documented
+mitigation, so it is not optional.
+
+**If wrong:** the single most important fact on the page -- can I deploy or not -- is invisible to
+some readers.
+
+**Say:** "Colour is the fastest channel, not the only one. Every status mark says what it is in
+words too."
+
+### 42. Static web assets are composed in every environment
+
+**Chose:** `builder.WebHost.UseStaticWebAssets()`, not only the Development default.
+
+**Why:** `dotnet run` defaults to Production when there is no launch profile. Without this the page
+renders from the prerender and then 404s on `blazor.web.js`, so it looks fine and does nothing --
+the worst kind of broken, and precisely what a reviewer cloning the repository would hit.
+
+**If wrong:** the first thing a reviewer sees is a dashboard whose buttons do not work.
+
+**Say:** "It rendered and it was dead. Found it by driving the real browser rather than trusting the
+200."

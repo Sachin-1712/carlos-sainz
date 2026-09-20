@@ -18,7 +18,8 @@ public sealed class CalendarFetchResult
         CalendarSource source,
         IEnumerable<RaceEventRecord> events,
         IEnumerable<string>? warnings = null,
-        IEnumerable<string>? unmappedCircuitIds = null)
+        IEnumerable<string>? unmappedCircuitIds = null,
+        IEnumerable<SkippedRound>? skippedRounds = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(providerName);
         ArgumentNullException.ThrowIfNull(events);
@@ -31,6 +32,7 @@ public sealed class CalendarFetchResult
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Order(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        SkippedRounds = (skippedRounds ?? Array.Empty<SkippedRound>()).OrderBy(r => r.Round).ToArray();
     }
 
     public string ProviderName { get; }
@@ -50,4 +52,17 @@ public sealed class CalendarFetchResult
     /// to the lookup table, so the thing to add should be readable without parsing prose.
     /// </remarks>
     public IReadOnlyList<string> UnmappedCircuitIds { get; }
+
+    /// <summary>
+    /// Rounds the provider returned but ingestion did not store, with the reason.
+    /// </summary>
+    /// <remarks>
+    /// This is what separates "upstream omits the round" from "ingestion dropped it". A round listed
+    /// here was sent and rejected, and the reason says why. A round that is missing from the stored
+    /// calendar yet absent from this list was never sent at all.
+    /// </remarks>
+    public IReadOnlyList<SkippedRound> SkippedRounds { get; }
 }
+
+/// <summary>A round the provider returned that ingestion could not use.</summary>
+public sealed record SkippedRound(int Round, string RaceName, string Reason);

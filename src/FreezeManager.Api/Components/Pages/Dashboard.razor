@@ -1,0 +1,643 @@
+@page "/"
+@inject NavigationManager Nav
+@rendermode InteractiveServer
+@inject FreezeContextFactory ContextFactory
+@inject ChangeRequestService Changes
+@inject CalendarRepository Calendar
+@inject SeasonSettings Season
+@inject TimeProvider Clock
+
+<div class="wrap">
+
+    <header class="page">
+        <h1>Race Weekend Change Freeze Manager</h1>
+        <p>
+            Season @Season.Season &middot; evaluated at @Format(_now)@(_atOverride ? " (chosen instant)" : "") &middot;
+            @(_calendar?.Events.Count ?? 0) rounds loaded
+        </p>
+        <div class="links">
+            <a href="/scalar/v1">Browse the API</a>
+            <a href="/api/audit/verify">Verify the audit chain</a>
+            <a href="/api/calendar/@Season.Season/completeness">Calendar completeness</a>
+        </div>
+    </header>
+
+    @if (_loading)
+    {
+        <p class="muted">Loading…</p>
+    }
+    else
+    {
+        <section>
+            <h2>Freeze status</h2>
+            <p class="lede">
+                Where each service stands at the evaluated instant. Trackside freezes from load-in; race
+                support tracks the sessions; corporate is advisory only, because marking everything
+                critical is how a freeze process loses credibility.
+            </p>
+            <div class="asat">
+                <label for="asat">Evaluate at (UTC)</label>
+                <input id="asat" type="datetime-local" @bind="_asAt" />
+                <button type="button" class="secondary" @onclick="ApplyAsAtAsync">Apply</button>
+                @if (_atOverride)
+                {
+                    <button type="button" class="secondary" @onclick="ResetAsAtAsync">Back to now</button>
+                }
+            </div>
+            <div class="card scroll-x">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Service</th><th>Tier</th><th>Status</th>
+                            <th>Reason</th><th>Thaws in</th><th>Next freeze in</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in _status)
+                        {
+                            <tr>
+                                <td>@row.ServiceName</td>
+                                <td class="tier">@row.Tier</td>
+                                <td>@StatusPill(row.Evaluation)</td>
+                                <td class="reason">@(row.Evaluation.Reason ?? "—")</td>
+                                <td class="mono">@Hours(row.Evaluation.TimeUntilThaw)</td>
+                                <td class="mono">@Hours(row.Evaluation.TimeUntilNextFreeze)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section>
+            <h2>The season, with freeze windows on it</h2>
+            <p class="lede">
+                Each strip is one tier across the whole season. The blocks are freeze windows; the space
+                between them is when you can actually deploy. Back-to-backs and triple headers are the
+                stretches where the gaps almost disappear.
+            </p>
+            <div class="card">
+                <div class="timeline">
+                    @foreach (var strip in _strips)
+                    {
+                        <div class="timeline-row">
+                            <div class="timeline-label">@strip.Label</div>
+                            <div class="timeline-track">
+                                @foreach (var block in strip.Blocks)
+                                {
+                                    <div class="timeline-block @(block.IsAdvisory ? "advisory" : null)"
+                                         style="left:@(Pct(block.LeftPercent));width:@(Pct(block.WidthPercent))"
+                                         title="@block.Tooltip"></div>
+                                }
+                            </div>
+                        </div>
+                    }
+                    <div class="timeline-months">
+                        <div></div>
+                        <div class="timeline-month-marks">
+                            @foreach (var mark in _monthMarks)
+                            {
+                                <span class="timeline-month" style="left:@(Pct(mark.Percent))">@mark.Label</span>
+                            }
+                        </div>
+                    </div>
+                </div>
+
+                <p class="legend">
+                    <span class="key"><span class="swatch frozen"></span> Frozen — changes blocked</span>
+                    <span class="key"><span class="swatch advisory"></span> Advisory — warned, not blocked</span>
+                    <span class="key"><span class="swatch open"></span> Open — deployable</span>
+                </p>
+            </div>
+        </section>
+
+        <section>
+            <h2>Raise a change</h2>
+            <p class="lede">
+                Pick the services and the form fills in the next window that is actually open for them.
+                A refusal always carries somewhere to go instead, so the compliant path is the default
+                rather than the effortful one.
+            </p>
+
+            <div class="card">
+                @if (_nextOpen is not null && _lastBlocked is null)
+                {
+                    <div class="callout open">
+                        <h3>Next open window for the selected services</h3>
+                        <p class="mono">@Format(_nextOpen.StartUtc) → @Format(_nextOpen.EndUtc) (@Round(_nextOpen.Duration.TotalHours) h)</p>
+                        <button type="button" class="secondary" @onclick="UseSuggestedWindow">Use this window</button>
+                    </div>
+                }
+                else if (_nextOpen is null && _lastBlocked is null && _selectedServices.Count > 0)
+                {
+                    <div class="callout warn">
+                        <h3>No open window found</h3>
+                        <p>Nothing long enough inside the search horizon for these services.</p>
+                    </div>
+                }
+
+                @if (_lastBlocked is not null)
+                {
+                    <div class="callout blocked">
+                        <h3>Blocked by a change freeze</h3>
+                        @foreach (var conflict in _lastBlocked.Conflicts)
+                        {
+                            <p>@conflict.Reason</p>
+                        }
+                        @if (_lastBlocked.SuggestedOpenWindow is not null)
+                        {
+                            <p class="mono">
+                                Next window: @Format(_lastBlocked.SuggestedOpenWindow.StartUtc) →
+                                @Format(_lastBlocked.SuggestedOpenWindow.EndUtc)
+                            </p>
+                            <button type="button" class="secondary" @onclick="UseBlockedSuggestion">Move to that window</button>
+                        }
+                    </div>
+                }
+
+                @if (_problems.Count > 0)
+                {
+                    <div class="callout warn">
+                        <h3>Not ready to submit</h3>
+                        @foreach (var problem in _problems)
+                        {
+                            <p>@problem</p>
+                        }
+                    </div>
+                }
+
+                @if (_lastSuccess is not null)
+                {
+                    <div class="callout open">
+                        <h3>@_lastSuccess</h3>
+                    </div>
+                }
+
+                <div class="grid2">
+                    <div>
+                        <div class="field">
+                            <label for="title">Title</label>
+                            <input id="title" type="text" @bind="_title" @bind:event="oninput" />
+                        </div>
+                        <div class="field">
+                            <label for="by">Requested by</label>
+                            <input id="by" type="text" @bind="_requestedBy" @bind:event="oninput" />
+                        </div>
+                        <div class="field">
+                            <label>Affected services</label>
+                            <div class="checks">
+                                @foreach (var service in _services)
+                                {
+                                    <label>
+                                        <input type="checkbox"
+                                               checked="@_selectedServices.Contains(service.Key)"
+                                               @onchange="e => ToggleService(service.Key, e)" />
+                                        @service.Name
+                                    </label>
+                                }
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label for="type">Type</label>
+                            <select id="type" @bind="_type">
+                                @foreach (var value in Enum.GetValues<ChangeType>())
+                                {
+                                    <option value="@value">@value</option>
+                                }
+                            </select>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="field">
+                            <label for="start">Window start (UTC)</label>
+                            <input id="start" type="datetime-local" @bind="_start" />
+                        </div>
+                        <div class="field">
+                            <label for="end">Window end (UTC)</label>
+                            <input id="end" type="datetime-local" @bind="_end" />
+                        </div>
+                        <div class="field">
+                            <label for="desc">Description</label>
+                            <textarea id="desc" @bind="_description"></textarea>
+                        </div>
+                        <div class="field">
+                            <label for="plan">Implementation plan</label>
+                            <textarea id="plan" @bind="_implementationPlan"></textarea>
+                        </div>
+                        <div class="field">
+                            <label for="backout">Backout plan</label>
+                            <textarea id="backout" @bind="_backoutPlan"></textarea>
+                        </div>
+                    </div>
+                </div>
+
+                <button type="button" @onclick="SubmitAsync" disabled="@_busy">Raise and submit</button>
+            </div>
+        </section>
+
+        <section>
+            <h2>Changes</h2>
+            <p class="lede">Most recent first. A blocked submission is recorded too, in the audit log.</p>
+            <div class="card scroll-x">
+                @if (_changes.Count == 0)
+                {
+                    <p class="muted">No changes raised yet.</p>
+                }
+                else
+                {
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Reference</th><th>Title</th><th>State</th>
+                                <th>Risk</th><th>Services</th><th>Window (UTC)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var change in _changes)
+                            {
+                                <tr>
+                                    <td class="mono">@change.Reference</td>
+                                    <td>@change.Title</td>
+                                    <td>@StatePill(change.State)</td>
+                                    <td>@change.Risk</td>
+                                    <td class="muted">@string.Join(", ", change.AffectedServiceKeys)</td>
+                                    <td class="mono muted">@Format(change.RequestedStartUtc) → @Format(change.RequestedEndUtc)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </div>
+        </section>
+    }
+</div>
+
+@code {
+    private bool _loading = true;
+    private bool _busy;
+    private DateTimeOffset _now;
+
+    /// <summary>
+    /// The instant the page reasons about. Defaults to now; a planner asking "what is frozen next
+    /// Friday?" is the same question the engine already answers, so the page exposes it rather than
+    /// pretending only the present exists.
+    /// </summary>
+    private DateTime _asAt;
+    private bool _atOverride;
+
+    private RaceCalendar? _calendar;
+    private FreezeContext? _context;
+    private readonly List<ServiceStatus> _status = new();
+    private readonly List<TimelineStrip> _strips = new();
+    private readonly List<MonthMark> _monthMarks = new();
+    private IReadOnlyList<ManagedService> _services = Array.Empty<ManagedService>();
+    private IReadOnlyList<ChangeRequest> _changes = Array.Empty<ChangeRequest>();
+
+    // Form state.
+    private string _title = string.Empty;
+    private string _requestedBy = string.Empty;
+    private string _description = string.Empty;
+    private string _implementationPlan = string.Empty;
+    private string _backoutPlan = string.Empty;
+    private ChangeType _type = ChangeType.Normal;
+    private DateTime _start;
+    private DateTime _end;
+    private readonly HashSet<string> _selectedServices = new(StringComparer.OrdinalIgnoreCase);
+
+    private OpenWindow? _nextOpen;
+    private FreezeGateDecision? _lastBlocked;
+    private string? _lastSuccess;
+    private List<string> _problems = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _now = Clock.GetUtcNow();
+
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(new Uri(Nav.Uri).Query);
+
+        if (query.TryGetValue("at", out var raw)
+            && DateTimeOffset.TryParse(raw.ToString(), CultureInfo.InvariantCulture,
+                DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var parsed))
+        {
+            _now = parsed;
+            _atOverride = true;
+        }
+
+        _asAt = _now.UtcDateTime;
+        _start = _now.AddDays(1).UtcDateTime;
+        _end = _start.AddHours(2);
+
+        await LoadAsync();
+        _loading = false;
+    }
+
+    private async Task ApplyAsAtAsync()
+    {
+        _now = new DateTimeOffset(DateTime.SpecifyKind(_asAt, DateTimeKind.Utc));
+        _atOverride = true;
+        await LoadAsync();
+        await RefreshSuggestionAsync();
+    }
+
+    private async Task ResetAsAtAsync()
+    {
+        _now = Clock.GetUtcNow();
+        _asAt = _now.UtcDateTime;
+        _atOverride = false;
+        await LoadAsync();
+        await RefreshSuggestionAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _context = await ContextFactory.CreateAsync(Season.Season);
+        _calendar = await Calendar.LoadSeasonAsync(Season.Season);
+        _services = await Calendar.LoadServicesAsync();
+        _changes = await Changes.ListAsync();
+
+        _status.Clear();
+
+        foreach (var service in _services)
+        {
+            _status.Add(new ServiceStatus(
+                service.Name,
+                PlainTierLabel(service.Tier),
+                _context.Calculator.Evaluate(service.Tier, _now)));
+        }
+
+        BuildTimeline();
+    }
+
+    /// <summary>
+    /// Lays the season out as one proportional strip per tier.
+    /// </summary>
+    /// <remarks>
+    /// Positions are percentages of the season's own span rather than of a fixed calendar year, so
+    /// the strip fills the width whatever shape the season is.
+    /// </remarks>
+    private void BuildTimeline()
+    {
+        _strips.Clear();
+        _monthMarks.Clear();
+
+        if (_context is null || _calendar is null || _calendar.Events.Count == 0)
+        {
+            return;
+        }
+
+        var starts = _calendar.ActiveEvents.Select(e => e.FirstSessionStartUtc).Where(d => d.HasValue).ToArray();
+        var ends = _calendar.ActiveEvents.Select(e => e.LastSessionEndUtc).Where(d => d.HasValue).ToArray();
+
+        if (starts.Length == 0 || ends.Length == 0)
+        {
+            return;
+        }
+
+        var seasonStart = starts.Min()!.Value.AddDays(-7);
+        var seasonEnd = ends.Max()!.Value.AddDays(7);
+        var span = (seasonEnd - seasonStart).TotalSeconds;
+
+        if (span <= 0)
+        {
+            return;
+        }
+
+        foreach (var tier in new[] { ServiceTier.Trackside, ServiceTier.RaceSupport, ServiceTier.Corporate })
+        {
+            var blocks = new List<TimelineBlock>();
+
+            foreach (var window in _context.Calculator.WindowsFor(tier))
+            {
+                var left = (window.StartUtc - seasonStart).TotalSeconds / span * 100d;
+                var width = window.Duration.TotalSeconds / span * 100d;
+
+                if (width <= 0)
+                {
+                    continue;
+                }
+
+                // Sub-pixel slivers would be invisible; a freeze you cannot see is worse than a
+                // slightly wide one, so clamp to a legible minimum.
+                blocks.Add(new TimelineBlock(
+                    Math.Clamp(left, 0d, 100d),
+                    Math.Clamp(Math.Max(width, 0.35d), 0d, 100d),
+                    window.IsAdvisory,
+                    $"{window.Reason} — {window.StartUtc:yyyy-MM-dd HH:mm}Z to {window.EndUtc:yyyy-MM-dd HH:mm}Z"));
+            }
+
+            _strips.Add(new TimelineStrip(TierLabel(tier), blocks));
+        }
+
+        var cursor = new DateTimeOffset(seasonStart.Year, seasonStart.Month, 1, 0, 0, 0, TimeSpan.Zero).AddMonths(1);
+
+        while (cursor < seasonEnd)
+        {
+            _monthMarks.Add(new MonthMark(
+                (cursor - seasonStart).TotalSeconds / span * 100d,
+                cursor.ToString("MMM", CultureInfo.InvariantCulture)));
+
+            cursor = cursor.AddMonths(1);
+        }
+    }
+
+    private static string TierLabel(ServiceTier tier) => tier switch
+    {
+        ServiceTier.Trackside => "Trackside",
+        ServiceTier.RaceSupport => "Race support",
+        _ => "Corporate (advisory)"
+    };
+
+    private static string PlainTierLabel(ServiceTier tier) =>
+        tier == ServiceTier.Corporate ? "Corporate" : TierLabel(tier);
+
+    private async Task ToggleService(string key, ChangeEventArgs args)
+    {
+        if (args.Value is true)
+        {
+            _selectedServices.Add(key);
+        }
+        else
+        {
+            _selectedServices.Remove(key);
+        }
+
+        await RefreshSuggestionAsync();
+    }
+
+    /// <summary>
+    /// Recomputes the next open window whenever the selection changes.
+    /// </summary>
+    /// <remarks>
+    /// This is the point of the page: the compliant window is on screen before anyone types a date,
+    /// rather than being discovered by being refused.
+    /// </remarks>
+    private async Task RefreshSuggestionAsync()
+    {
+        _nextOpen = null;
+
+        if (_context is null || _selectedServices.Count == 0)
+        {
+            return;
+        }
+
+        var tiers = _selectedServices
+            .Where(_context.TiersByServiceKey.ContainsKey)
+            .Select(k => _context.TiersByServiceKey[k])
+            .ToArray();
+
+        if (tiers.Length == 0)
+        {
+            return;
+        }
+
+        var requested = _end > _start ? _end - _start : TimeSpan.FromHours(2);
+        _nextOpen = _context.Calculator.NextOpenWindow(tiers, _now, requested);
+
+        await Task.CompletedTask;
+    }
+
+    private void UseSuggestedWindow()
+    {
+        if (_nextOpen is null)
+        {
+            return;
+        }
+
+        var duration = _end > _start ? _end - _start : TimeSpan.FromHours(2);
+        _start = _nextOpen.StartUtc.UtcDateTime;
+        _end = _start.Add(duration);
+    }
+
+    private void UseBlockedSuggestion()
+    {
+        if (_lastBlocked?.SuggestedOpenWindow is null)
+        {
+            return;
+        }
+
+        var duration = _end > _start ? _end - _start : TimeSpan.FromHours(2);
+        _start = _lastBlocked.SuggestedOpenWindow.StartUtc.UtcDateTime;
+        _end = _start.Add(duration);
+        _lastBlocked = null;
+    }
+
+    private async Task SubmitAsync()
+    {
+        _busy = true;
+        _problems = new List<string>();
+        _lastBlocked = null;
+        _lastSuccess = null;
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(_title)) _problems.Add("A title is required.");
+            if (string.IsNullOrWhiteSpace(_requestedBy)) _problems.Add("A requester is required.");
+            if (_selectedServices.Count == 0) _problems.Add("At least one affected service is required.");
+            if (_end <= _start) _problems.Add("The window must end after it starts.");
+
+            if (_problems.Count > 0)
+            {
+                return;
+            }
+
+            var created = await Changes.CreateDraftAsync(new NewChangeRequest
+            {
+                Title = _title,
+                RequestedBy = _requestedBy,
+                Description = _description,
+                ImplementationPlan = _implementationPlan,
+                BackoutPlan = _backoutPlan,
+                Type = _type,
+                AffectedServiceKeys = _selectedServices.ToArray(),
+                RequestedStartUtc = new DateTimeOffset(DateTime.SpecifyKind(_start, DateTimeKind.Utc)),
+                RequestedEndUtc = new DateTimeOffset(DateTime.SpecifyKind(_end, DateTimeKind.Utc))
+            });
+
+            if (!created.Succeeded)
+            {
+                _problems.AddRange(created.Problems);
+                return;
+            }
+
+            var reference = created.Change!.Reference.ToString();
+            var submitted = await Changes.TransitionAsync(reference, ChangeState.Submitted);
+
+            if (submitted.Status == ChangeOperationStatus.BlockedByFreeze)
+            {
+                // The draft stays: it is a real change that needs a different window, not a mistake.
+                _lastBlocked = submitted.GateDecision;
+            }
+            else if (submitted.Succeeded)
+            {
+                _lastSuccess = $"{reference} submitted for {Format(created.Change.RequestedStartUtc)}.";
+            }
+            else
+            {
+                _problems.AddRange(submitted.Problems);
+            }
+
+            await LoadAsync();
+            await RefreshSuggestionAsync();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private static string Format(DateTimeOffset instant) =>
+        instant.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) + "Z";
+
+    private static string Hours(TimeSpan? span) =>
+        span is null ? "—" : Round(span.Value.TotalHours) + " h";
+
+    private static string Round(double value) =>
+        Math.Round(value, 1).ToString(CultureInfo.InvariantCulture);
+
+    private static string Pct(double value) =>
+        value.ToString("0.###", CultureInfo.InvariantCulture) + "%";
+
+    private static RenderFragment StatusPill(FreezeEvaluation evaluation) => builder =>
+    {
+        var (css, icon, label) = evaluation switch
+        {
+            { IsFrozen: true } => ("pill frozen", "■", "FROZEN"),
+            { IsAdvisory: true } => ("pill advisory", "▲", "ADVISORY"),
+            _ => ("pill open", "●", "OPEN")
+        };
+
+        builder.OpenElement(0, "span");
+        builder.AddAttribute(1, "class", css);
+        builder.OpenElement(2, "span");
+        builder.AddAttribute(3, "class", "ic");
+        builder.AddContent(4, icon);
+        builder.CloseElement();
+        builder.AddContent(5, label);
+        builder.CloseElement();
+    };
+
+    private static RenderFragment StatePill(ChangeState state) => builder =>
+    {
+        var css = state switch
+        {
+            ChangeState.Rejected or ChangeState.Failed => "pill frozen",
+            ChangeState.Draft or ChangeState.Submitted => "pill neutral",
+            ChangeState.Closed or ChangeState.Implemented or ChangeState.Approved => "pill open",
+            _ => "pill neutral"
+        };
+
+        builder.OpenElement(0, "span");
+        builder.AddAttribute(1, "class", css);
+        builder.AddContent(2, state.ToString());
+        builder.CloseElement();
+    };
+
+    private sealed record ServiceStatus(string ServiceName, string Tier, FreezeEvaluation Evaluation);
+
+    private sealed record TimelineStrip(string Label, IReadOnlyList<TimelineBlock> Blocks);
+
+    private sealed record TimelineBlock(double LeftPercent, double WidthPercent, bool IsAdvisory, string Tooltip);
+
+    private sealed record MonthMark(double Percent, string Label);
+}

@@ -151,6 +151,12 @@ public sealed class CalendarSyncRunRecord
     public int EventsSkipped { get; set; }
 
     public string? Message { get; set; }
+
+    /// <summary>
+    /// Rounds ingestion dropped, as JSON. Stored rather than only returned so that "why is round N
+    /// missing?" can be answered later, not only in the second after a sync.
+    /// </summary>
+    public string? SkippedRoundsJson { get; set; }
 }
 
 public sealed class ChangeRequestRecord

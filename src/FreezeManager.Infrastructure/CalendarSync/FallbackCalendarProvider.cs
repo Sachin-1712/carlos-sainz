@@ -50,7 +50,8 @@ public sealed class FallbackCalendarProvider : IRaceCalendarProvider
             warnings.AddRange(fallback.Warnings);
 
             return new CalendarFetchResult(
-                fallback.ProviderName, fallback.Source, fallback.Events, warnings, fallback.UnmappedCircuitIds);
+                fallback.ProviderName, fallback.Source, fallback.Events, warnings,
+                fallback.UnmappedCircuitIds, fallback.SkippedRounds);
         }
     }
 }

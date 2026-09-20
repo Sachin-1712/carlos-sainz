@@ -104,16 +104,20 @@ public sealed class CalendarSyncService
         run.EventsUpdated = updated;
         run.EventsSkipped = skipped;
         run.Message = fetched.Warnings.Count == 0 ? null : string.Join(" | ", fetched.Warnings);
+        run.SkippedRoundsJson = fetched.SkippedRounds.Count == 0
+            ? null
+            : System.Text.Json.JsonSerializer.Serialize(fetched.SkippedRounds);
         await _db.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation(
-            "Calendar sync for season {Season} from {Provider}: {Added} added, {Updated} updated, {Skipped} pinned, {Warnings} warnings, unmapped circuits: {Unmapped}.",
+            "Calendar sync for season {Season} from {Provider}: {Added} added, {Updated} updated, {Pinned} pinned, {Warnings} warnings, unmapped circuits: {Unmapped}, rounds dropped: {Dropped}.",
             season, fetched.ProviderName, added, updated, skipped, fetched.Warnings.Count,
-            fetched.UnmappedCircuitIds.Count == 0 ? "none" : string.Join(", ", fetched.UnmappedCircuitIds));
+            fetched.UnmappedCircuitIds.Count == 0 ? "none" : string.Join(", ", fetched.UnmappedCircuitIds),
+            fetched.SkippedRounds.Count == 0 ? "none" : string.Join(", ", fetched.SkippedRounds.Select(r => r.Round)));
 
         return new CalendarSyncResult(
             season, fetched.ProviderName, fetched.Source, added, updated, skipped,
-            fetched.Warnings, fetched.UnmappedCircuitIds);
+            fetched.Warnings, fetched.UnmappedCircuitIds, fetched.SkippedRounds);
     }
 
     private static void Apply(RaceEventRecord current, RaceEventRecord incoming)
@@ -186,6 +190,7 @@ public sealed class CalendarSyncResult
         int skippedPinned,
         IReadOnlyList<string> warnings,
         IReadOnlyList<string> unmappedCircuitIds,
+        IReadOnlyList<SkippedRound> skippedRounds,
         string? error = null)
     {
         Season = season;
@@ -196,11 +201,13 @@ public sealed class CalendarSyncResult
         SkippedPinned = skippedPinned;
         Warnings = warnings;
         UnmappedCircuitIds = unmappedCircuitIds;
+        SkippedRounds = skippedRounds;
         Error = error;
     }
 
     public static CalendarSyncResult Failed(int season, string providerName, string error) =>
-        new(season, providerName, null, 0, 0, 0, Array.Empty<string>(), Array.Empty<string>(), error);
+        new(season, providerName, null, 0, 0, 0,
+            Array.Empty<string>(), Array.Empty<string>(), Array.Empty<SkippedRound>(), error);
 
     public int Season { get; }
 
@@ -218,6 +225,9 @@ public sealed class CalendarSyncResult
 
     /// <summary>Circuits with no time zone mapping. Each one is a row to add to the lookup table.</summary>
     public IReadOnlyList<string> UnmappedCircuitIds { get; }
+
+    /// <summary>Rounds upstream sent that ingestion could not store, each with its reason.</summary>
+    public IReadOnlyList<SkippedRound> SkippedRounds { get; }
 
     public string? Error { get; }
 

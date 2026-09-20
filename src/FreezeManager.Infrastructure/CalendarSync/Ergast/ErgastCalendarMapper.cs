@@ -20,12 +20,14 @@ public static class ErgastCalendarMapper
         var races = response.MRData?.RaceTable?.Races ?? new List<ErgastRace>();
         var warnings = new List<string>();
         var unmappedCircuitIds = new List<string>();
+        var skipped = new List<SkippedRound>();
         var events = new List<RaceEventRecord>();
 
         foreach (var race in races)
         {
             if (!int.TryParse(race.Round, NumberStyles.Integer, CultureInfo.InvariantCulture, out var round) || round < 1)
             {
+                skipped.Add(new SkippedRound(0, race.RaceName ?? "(unnamed)", $"Unreadable round number '{race.Round}'."));
                 warnings.Add($"Skipped a race with an unreadable round number '{race.Round}'.");
                 continue;
             }
@@ -43,6 +45,13 @@ public static class ErgastCalendarMapper
 
             if (sessions.Count == 0)
             {
+                // The round exists upstream but carries no usable times. Recorded as skipped rather
+                // than merely warned about, because a missing round is a weekend with no freeze.
+                skipped.Add(new SkippedRound(
+                    round,
+                    race.RaceName ?? $"Round {round}",
+                    "No session has a published time yet, so the round cannot be stored."));
+
                 warnings.Add($"Round {round}: no session has a published time yet; skipped.");
                 continue;
             }
@@ -76,7 +85,8 @@ public static class ErgastCalendarMapper
             });
         }
 
-        return new CalendarFetchResult(providerName, CalendarSource.LiveUpstream, events, warnings, unmappedCircuitIds);
+        return new CalendarFetchResult(
+            providerName, CalendarSource.LiveUpstream, events, warnings, unmappedCircuitIds, skipped);
     }
 
     private static void AddSession(

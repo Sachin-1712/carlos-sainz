@@ -7,7 +7,8 @@ namespace FreezeManager.Infrastructure.CalendarSync;
 /// </summary>
 public static class CircuitTimeZones
 {
-    public const string Unknown = "Etc/UTC";
+    /// <summary>The domain owns this value so the completeness check agrees with ingestion.</summary>
+    public const string Unknown = FreezeManager.Domain.Calendar.RaceEvent.UnresolvedTimeZoneId;
 
     private static readonly Dictionary<string, string> Map = new(StringComparer.OrdinalIgnoreCase)
     {

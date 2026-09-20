@@ -3,6 +3,12 @@ namespace FreezeManager.Domain.Calendar;
 /// <summary>A single round of the championship, with its sessions and parc ferme windows.</summary>
 public sealed class RaceEvent
 {
+    /// <summary>
+    /// What a circuit's time zone is set to when it could not be resolved. Defined here so the
+    /// ingestion layer and the completeness check agree on one value.
+    /// </summary>
+    public const string UnresolvedTimeZoneId = "Etc/UTC";
+
     public RaceEvent(
         int round,
         string officialName,
