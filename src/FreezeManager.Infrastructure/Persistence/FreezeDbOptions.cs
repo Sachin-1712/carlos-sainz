@@ -21,4 +21,47 @@ public static class FreezeDbOptions
         ArgumentNullException.ThrowIfNull(builder);
         builder.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
     }
+
+    /// <summary>
+    /// Everything a correctly configured context needs: split queries, and the interceptor that
+    /// makes the audit log append-only. Hosts call this rather than assembling it themselves, so a
+    /// context configured without the guarantee cannot be created by accident.
+    /// </summary>
+    public static DbContextOptionsBuilder UseFreezeDefaults(
+        this DbContextOptionsBuilder builder,
+        string connectionString)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        return builder.UseSqlite(connectionString, Apply).AddInterceptors(new AppendOnlyAuditInterceptor());
+    }
+
+    public static DbContextOptionsBuilder UseFreezeDefaults(
+        this DbContextOptionsBuilder builder,
+        System.Data.Common.DbConnection connection)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        return builder.UseSqlite(connection, Apply).AddInterceptors(new AppendOnlyAuditInterceptor());
+    }
+
+    // Generic overloads so a typed builder stays typed; without them the caller loses
+    // DbContextOptions<TContext> and cannot construct the context.
+    public static DbContextOptionsBuilder<TContext> UseFreezeDefaults<TContext>(
+        this DbContextOptionsBuilder<TContext> builder,
+        string connectionString)
+        where TContext : DbContext
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        UseFreezeDefaults((DbContextOptionsBuilder)builder, connectionString);
+        return builder;
+    }
+
+    public static DbContextOptionsBuilder<TContext> UseFreezeDefaults<TContext>(
+        this DbContextOptionsBuilder<TContext> builder,
+        System.Data.Common.DbConnection connection)
+        where TContext : DbContext
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        UseFreezeDefaults((DbContextOptionsBuilder)builder, connection);
+        return builder;
+    }
 }

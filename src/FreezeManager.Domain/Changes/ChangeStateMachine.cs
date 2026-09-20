@@ -16,9 +16,17 @@ public static class ChangeStateMachine
         [ChangeState.Draft] = new[] { ChangeState.Submitted, ChangeState.Cancelled },
 
         // Back to draft is a withdrawal for rework, which is a normal thing to want.
-        [ChangeState.Submitted] = new[] { ChangeState.Scheduled, ChangeState.Draft, ChangeState.Cancelled },
+        [ChangeState.Submitted] = new[]
+        {
+            ChangeState.Approved, ChangeState.Rejected, ChangeState.Draft, ChangeState.Cancelled
+        },
 
-        [ChangeState.Scheduled] = new[] { ChangeState.Implementing, ChangeState.Submitted, ChangeState.Cancelled },
+        [ChangeState.Approved] = new[] { ChangeState.Scheduled, ChangeState.Draft, ChangeState.Cancelled },
+
+        // A rejection is reworked or abandoned. It never proceeds.
+        [ChangeState.Rejected] = new[] { ChangeState.Draft, ChangeState.Cancelled },
+
+        [ChangeState.Scheduled] = new[] { ChangeState.Implementing, ChangeState.Approved, ChangeState.Cancelled },
 
         [ChangeState.Implementing] = new[] { ChangeState.Implemented, ChangeState.Failed },
 
@@ -51,12 +59,19 @@ public static class ChangeStateMachine
         }
     }
 
-    /// <summary>Transitions that must clear the freeze gate before they are allowed.</summary>
+    /// <summary>
+    /// Transitions that must clear the freeze gate before they are allowed.
+    /// </summary>
+    /// <remarks>
+    /// Submission and scheduling: the two points at which a window is being claimed. Approval sits
+    /// between them and does not re-run the gate, because approving a change is agreeing to the
+    /// work, not to the slot -- the slot is re-checked when it is confirmed.
+    /// </remarks>
     public static bool RequiresFreezeCheck(ChangeState from, ChangeState to) =>
         (from, to) switch
         {
             (ChangeState.Draft, ChangeState.Submitted) => true,
-            (ChangeState.Submitted, ChangeState.Scheduled) => true,
+            (ChangeState.Approved, ChangeState.Scheduled) => true,
             _ => false
         };
 }

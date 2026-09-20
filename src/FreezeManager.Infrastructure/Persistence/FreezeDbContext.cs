@@ -24,6 +24,14 @@ public sealed class FreezeDbContext : DbContext
 
     public DbSet<ChangeAffectedServiceRecord> ChangeAffectedServices => Set<ChangeAffectedServiceRecord>();
 
+    public DbSet<ChangeApprovalRecord> ChangeApprovals => Set<ChangeApprovalRecord>();
+
+    public DbSet<FreezeOverrideRecord> FreezeOverrides => Set<FreezeOverrideRecord>();
+
+    public DbSet<OverrideApprovalRecord> OverrideApprovals => Set<OverrideApprovalRecord>();
+
+    public DbSet<AuditEntryRecord> AuditEntries => Set<AuditEntryRecord>();
+
     /// <summary>
     /// SQLite stores timestamps as text and hands them back with <c>Kind = Unspecified</c>. Every
     /// timestamp in this store is UTC, so stamp the kind back on the way out.
@@ -101,6 +109,61 @@ public sealed class FreezeDbContext : DbContext
                 .WithOne()
                 .HasForeignKey(s => s.ChangeRequestId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasMany(c => c.Approvals)
+                .WithOne()
+                .HasForeignKey(a => a.ChangeRequestId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ChangeApprovalRecord>(entity =>
+        {
+            entity.ToTable("ChangeApprovals");
+            entity.HasIndex(a => new { a.ChangeRequestId, a.Role }).IsUnique();
+            entity.Property(a => a.Approver).HasMaxLength(200).IsRequired();
+            entity.Property(a => a.Comment).HasMaxLength(2000);
+        });
+
+        modelBuilder.Entity<FreezeOverrideRecord>(entity =>
+        {
+            entity.ToTable("FreezeOverrides");
+            entity.HasIndex(o => o.ChangeReference);
+            entity.HasIndex(o => o.State);
+            entity.Property(o => o.ChangeReference).HasMaxLength(32).IsRequired();
+            entity.Property(o => o.IncidentReference).HasMaxLength(32).IsRequired();
+            entity.Property(o => o.Justification).HasMaxLength(4000).IsRequired();
+            entity.Property(o => o.RequestedBy).HasMaxLength(200).IsRequired();
+            entity.Property(o => o.RetrospectiveNotes).HasMaxLength(4000);
+
+            entity.HasMany(o => o.Approvals)
+                .WithOne()
+                .HasForeignKey(a => a.FreezeOverrideId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<OverrideApprovalRecord>(entity =>
+        {
+            entity.ToTable("OverrideApprovals");
+            entity.HasIndex(a => new { a.FreezeOverrideId, a.Role }).IsUnique();
+            entity.Property(a => a.Approver).HasMaxLength(200).IsRequired();
+            entity.Property(a => a.Comment).HasMaxLength(2000);
+        });
+
+        modelBuilder.Entity<AuditEntryRecord>(entity =>
+        {
+            entity.ToTable("AuditEntries");
+
+            // The sequence is the key and is assigned, never generated: it is part of the hash.
+            entity.HasKey(e => e.Sequence);
+            entity.Property(e => e.Sequence).ValueGeneratedNever();
+
+            entity.HasIndex(e => e.Subject);
+            entity.HasIndex(e => e.OccurredAtUtc);
+            entity.Property(e => e.Actor).HasMaxLength(200).IsRequired();
+            entity.Property(e => e.Subject).HasMaxLength(200).IsRequired();
+            entity.Property(e => e.Details).IsRequired();
+            entity.Property(e => e.PreviousHash).HasMaxLength(64).IsRequired().IsFixedLength();
+            entity.Property(e => e.Hash).HasMaxLength(64).IsRequired().IsFixedLength();
         });
 
         modelBuilder.Entity<ChangeAffectedServiceRecord>(entity =>

@@ -148,11 +148,27 @@ public class ChangeRequestTests
     {
         var change = Draft();
         change.TransitionTo(ChangeState.Submitted, Now);
+        change.TransitionTo(ChangeState.Approved, Now);
         change.TransitionTo(ChangeState.Scheduled, Now);
         change.TransitionTo(ChangeState.Implementing, Now);
 
         Assert.Throws<ChangeValidationException>(() =>
             change.Reschedule(WindowStart.AddDays(1), WindowStart.AddDays(1).AddHours(4), Now));
+    }
+
+    [Fact]
+    public void An_approved_change_can_still_have_its_window_confirmed()
+    {
+        // Confirming a window is what scheduling does, so approval must not freeze the window in
+        // place. Approval agrees to the work; the freeze gate re-checks the slot.
+        var change = Draft();
+        change.TransitionTo(ChangeState.Submitted, Now);
+        change.TransitionTo(ChangeState.Approved, Now);
+
+        change.Reschedule(WindowStart.AddDays(3), WindowStart.AddDays(3).AddHours(4), Now);
+
+        Assert.Equal(WindowStart.AddDays(3), change.RequestedStartUtc);
+        Assert.Equal(ChangeState.Approved, change.State);
     }
 
     [Fact]
@@ -171,7 +187,7 @@ public class ChangeRequestTests
 
         foreach (var state in new[]
                  {
-                     ChangeState.Submitted, ChangeState.Scheduled, ChangeState.Implementing,
+                     ChangeState.Submitted, ChangeState.Approved, ChangeState.Scheduled, ChangeState.Implementing,
                      ChangeState.Implemented, ChangeState.Closed
                  })
         {
@@ -188,6 +204,7 @@ public class ChangeRequestTests
     {
         var change = Draft();
         change.TransitionTo(ChangeState.Submitted, Now);
+        change.TransitionTo(ChangeState.Approved, Now);
         change.TransitionTo(ChangeState.Scheduled, Now);
         change.TransitionTo(ChangeState.Implementing, Now);
         change.TransitionTo(ChangeState.Failed, Now);

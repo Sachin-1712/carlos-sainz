@@ -1,9 +1,12 @@
+using FreezeManager.Domain.Approvals;
+
 namespace FreezeManager.Domain.Changes;
 
 /// <summary>A request to change one or more services, and its position in the lifecycle.</summary>
 public sealed class ChangeRequest
 {
     private readonly List<string> _affectedServiceKeys;
+    private readonly List<ChangeApproval> _approvals = new();
 
     public ChangeRequest(
         ChangeReference reference,
@@ -96,6 +99,54 @@ public sealed class ChangeRequest
 
     public IReadOnlyList<ChangeState> NextStates => ChangeStateMachine.NextStatesFrom(State);
 
+    /// <summary>Decisions recorded against this change, in the order they were made.</summary>
+    public IReadOnlyList<ChangeApproval> Approvals => _approvals;
+
+    /// <summary>Restores approvals from storage without replaying them.</summary>
+    public void RehydrateApprovals(IEnumerable<ChangeApproval> approvals)
+    {
+        ArgumentNullException.ThrowIfNull(approvals);
+
+        _approvals.Clear();
+        _approvals.AddRange(approvals.OrderBy(a => a.DecidedAtUtc));
+    }
+
+    /// <summary>
+    /// Records one role's decision. Approvals are cleared whenever the change returns to draft, so
+    /// an edited change cannot inherit approval of what it used to say.
+    /// </summary>
+    public void RecordApproval(ChangeApproval approval, ApprovalRequirement requirement, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(approval);
+        ArgumentNullException.ThrowIfNull(requirement);
+
+        if (State != ChangeState.Submitted)
+        {
+            throw new ChangeValidationException(
+                new[] { $"A change in state {State} is not awaiting approval." });
+        }
+
+        if (!requirement.Roles.Contains(approval.Role))
+        {
+            throw new ChangeValidationException(
+                new[]
+                {
+                    requirement.IsPreApproved
+                        ? "This change is pre-approved and takes no approvals."
+                        : $"{approval.Role} is not on the approval chain for this change ({string.Join(", ", requirement.Roles)})."
+                });
+        }
+
+        if (_approvals.Any(a => a.Role == approval.Role))
+        {
+            throw new ChangeValidationException(
+                new[] { $"{approval.Role} has already recorded a decision on this change." });
+        }
+
+        _approvals.Add(approval);
+        Touch(now);
+    }
+
     public void UpdateDetails(
         string title,
         string? description,
@@ -130,9 +181,15 @@ public sealed class ChangeRequest
     }
 
     /// <summary>
-    /// Moves the window. Allowed while the change is still a draft or submitted -- rescheduling a
-    /// change that is already being implemented is not a reschedule, it is a new change.
+    /// Moves the window.
     /// </summary>
+    /// <remarks>
+    /// Allowed up to and including <see cref="ChangeState.Scheduled"/>. Approved is on the list
+    /// because confirming a window is what the scheduling step does, and because approval agrees to
+    /// the work rather than to the slot -- the slot is re-checked by the freeze gate either way.
+    /// Rescheduling a change that is already being implemented is not a reschedule; it is a new
+    /// change.
+    /// </remarks>
     public void Reschedule(DateTimeOffset startUtc, DateTimeOffset endUtc, DateTimeOffset now)
     {
         if (endUtc <= startUtc)
@@ -140,7 +197,7 @@ public sealed class ChangeRequest
             throw new ArgumentException("A change window must end after it starts.", nameof(endUtc));
         }
 
-        if (State is not (ChangeState.Draft or ChangeState.Submitted or ChangeState.Scheduled))
+        if (State is not (ChangeState.Draft or ChangeState.Submitted or ChangeState.Approved or ChangeState.Scheduled))
         {
             throw new ChangeValidationException(
                 new[] { $"A change in state {State} cannot be rescheduled." });
@@ -158,6 +215,13 @@ public sealed class ChangeRequest
         if (target == ChangeState.Submitted && State == ChangeState.Draft)
         {
             EnsureReadyForSubmission();
+        }
+
+        // Approval is of a specific change. Going back to draft to edit it discards that, so
+        // nobody can approve one thing and have it apply to another.
+        if (target == ChangeState.Draft)
+        {
+            _approvals.Clear();
         }
 
         State = target;

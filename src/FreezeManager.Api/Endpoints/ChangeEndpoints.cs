@@ -180,7 +180,7 @@ public static class ChangeEndpoints
         switch (result.Status)
         {
             case ChangeOperationStatus.Succeeded:
-                return Results.Ok(ChangeResponse.From(result.Change!, result.GateDecision));
+                return Results.Ok(ChangeResponse.From(result.Change!, result.GateDecision, result.UsedOverride));
 
             case ChangeOperationStatus.NotFound:
                 return Results.NotFound();

@@ -99,9 +99,10 @@ public class FreezeGateApiTests : IClassFixture<FreezeApiFactory>
     [Fact]
     public async Task Scheduling_is_gated_too_not_only_submission()
     {
-        // Submit in the clear, then try to move the window into the freeze.
+        // Submit and approve in the clear, then try to move the window into the freeze.
         var reference = await DraftAsync(T.AddDays(-10), TimeSpan.FromHours(2));
         Assert.Equal(HttpStatusCode.OK, (await _client.PostEmptyAsync($"/api/changes/{reference}/submit")).StatusCode);
+        await _client.ApproveChainAsync(reference);
 
         var response = await _client.PostJsonAsync(
             $"/api/changes/{reference}/schedule",

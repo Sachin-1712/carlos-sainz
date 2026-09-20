@@ -1,4 +1,5 @@
 using FreezeManager.Domain.Changes;
+using FreezeManager.Domain.Overrides;
 
 namespace FreezeManager.Api.Contracts;
 
@@ -78,10 +79,20 @@ public sealed record ChangeResponse
 
     public required DateTimeOffset UpdatedAtUtc { get; init; }
 
-    /// <summary>Present when the freeze gate ran and allowed the move.</summary>
+    /// <summary>Present when the freeze gate ran. Read it together with <see cref="ProceededUnderOverride"/>.</summary>
     public FreezeGateResponse? FreezeGate { get; init; }
 
-    public static ChangeResponse From(ChangeRequest change, FreezeGateDecision? decision = null) => new()
+    /// <summary>
+    /// Present when the gate refused and a granted override carried the change through regardless.
+    /// When this is set, a FreezeGate outcome of "Blocked" means the move succeeded <i>despite</i>
+    /// the freeze, not that it failed.
+    /// </summary>
+    public OverrideUsageResponse? ProceededUnderOverride { get; init; }
+
+    public static ChangeResponse From(
+        ChangeRequest change,
+        FreezeGateDecision? decision = null,
+        FreezeOverride? usedOverride = null) => new()
     {
         Reference = change.Reference.ToString(),
         Title = change.Title,
@@ -102,6 +113,27 @@ public sealed record ChangeResponse
         IsEditable = change.IsEditable,
         CreatedAtUtc = change.CreatedAtUtc,
         UpdatedAtUtc = change.UpdatedAtUtc,
-        FreezeGate = decision is null ? null : FreezeGateResponse.From(decision)
+        FreezeGate = decision is null ? null : FreezeGateResponse.From(decision),
+        ProceededUnderOverride = usedOverride is null ? null : OverrideUsageResponse.From(usedOverride)
+    };
+}
+
+/// <summary>The override that carried a change through a freeze.</summary>
+public sealed record OverrideUsageResponse
+{
+    public required string IncidentReference { get; init; }
+
+    public required bool BreakGlass { get; init; }
+
+    public DateTimeOffset? GrantedAtUtc { get; init; }
+
+    public DateTimeOffset? ExpiresAtUtc { get; init; }
+
+    public static OverrideUsageResponse From(FreezeOverride source) => new()
+    {
+        IncidentReference = source.IncidentReference,
+        BreakGlass = source.IsBreakGlass,
+        GrantedAtUtc = source.GrantedAtUtc,
+        ExpiresAtUtc = source.ExpiresAtUtc
     };
 }

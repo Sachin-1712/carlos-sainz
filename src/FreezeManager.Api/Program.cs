@@ -1,8 +1,10 @@
 using System.Text.Json.Serialization;
 using FreezeManager.Api.Endpoints;
+using FreezeManager.Infrastructure.Audit;
 using FreezeManager.Infrastructure.CalendarSync;
 using FreezeManager.Infrastructure.CalendarSync.Seed;
 using FreezeManager.Infrastructure.Changes;
+using FreezeManager.Infrastructure.Overrides;
 using FreezeManager.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -22,16 +24,35 @@ var connectionString = builder.Configuration.GetConnectionString("Freeze") ?? "D
 
 builder.Services.AddSingleton(new SeasonSettings(season));
 builder.Services.AddSingleton(TimeProvider.System);
-builder.Services.AddDbContext<FreezeDbContext>(options =>
-    options.UseSqlite(connectionString, FreezeDbOptions.Apply));
+builder.Services.AddDbContext<FreezeDbContext>(options => options.UseFreezeDefaults(connectionString));
 
 builder.Services.AddScoped<CalendarRepository>();
 builder.Services.AddScoped<FreezeContextFactory>(sp =>
     new FreezeContextFactory(sp.GetRequiredService<CalendarRepository>()));
 
+builder.Services.AddScoped<AuditWriter>(sp => new AuditWriter(
+    sp.GetRequiredService<FreezeDbContext>(),
+    sp.GetRequiredService<TimeProvider>()));
+
+builder.Services.AddScoped<AuditReader>();
+
+builder.Services.AddScoped<OverrideService>(sp => new OverrideService(
+    sp.GetRequiredService<FreezeDbContext>(),
+    sp.GetRequiredService<FreezeContextFactory>(),
+    sp.GetRequiredService<AuditWriter>(),
+    sp.GetRequiredService<SeasonSettings>().Season,
+    sp.GetRequiredService<TimeProvider>()));
+
+builder.Services.AddScoped<OverrideExpirySweeper>(sp => new OverrideExpirySweeper(
+    sp.GetRequiredService<FreezeDbContext>(),
+    sp.GetRequiredService<AuditWriter>(),
+    sp.GetRequiredService<TimeProvider>()));
+
 builder.Services.AddScoped<ChangeRequestService>(sp => new ChangeRequestService(
     sp.GetRequiredService<FreezeDbContext>(),
     sp.GetRequiredService<FreezeContextFactory>(),
+    sp.GetRequiredService<AuditWriter>(),
+    sp.GetRequiredService<OverrideService>(),
     sp.GetRequiredService<SeasonSettings>().Season,
     sp.GetRequiredService<TimeProvider>()));
 
@@ -55,6 +76,10 @@ builder.Services.AddScoped<CalendarSyncService>(sp => new CalendarSyncService(
     sp.GetRequiredService<TimeProvider>(),
     sp.GetRequiredService<ILogger<CalendarSyncService>>()));
 
+// An override that quietly stops working leaves no trace that permission was ever held, so
+// something has to notice expiry happening rather than inferring it at read time.
+builder.Services.AddHostedService<OverrideExpiryBackgroundService>();
+
 var app = builder.Build();
 
 app.UseStatusCodePages();
@@ -65,14 +90,20 @@ if (app.Environment.IsDevelopment())
 }
 
 app.MapChangeEndpoints();
+app.MapApprovalEndpoints();
+app.MapOverrideEndpoints();
 app.MapFreezeEndpoints();
 app.MapCalendarEndpoints();
+app.MapAuditEndpoints();
 
 app.MapGet("/", () => Results.Ok(new
 {
     service = "Race Weekend Change Freeze Manager",
     season,
-    endpoints = new[] { "/api/changes", "/api/freeze/status", "/api/calendar/{season}" }
+    endpoints = new[]
+    {
+        "/api/changes", "/api/freeze/status", "/api/calendar/{season}", "/api/audit", "/api/audit/verify"
+    }
 }))
 .ExcludeFromDescription();
 
@@ -131,6 +162,60 @@ internal static class StartupTasks
             logger.LogInformation(
                 "Calendar bootstrap for {Season} from {Provider}: {Added} added, {Warnings} warnings.",
                 season, result.ProviderName, result.Added, result.Warnings.Count);
+        }
+    }
+}
+
+/// <summary>
+/// Runs the override expiry sweep on a timer.
+/// </summary>
+/// <remarks>
+/// The sweep is also exposed as an endpoint so a test, or an operator, can run it at a chosen
+/// instant rather than waiting for the timer.
+/// </remarks>
+internal sealed class OverrideExpiryBackgroundService : BackgroundService
+{
+    private static readonly TimeSpan Interval = TimeSpan.FromMinutes(1);
+
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly ILogger<OverrideExpiryBackgroundService> _logger;
+
+    public OverrideExpiryBackgroundService(
+        IServiceScopeFactory scopeFactory,
+        ILogger<OverrideExpiryBackgroundService> logger)
+    {
+        _scopeFactory = scopeFactory;
+        _logger = logger;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        using var timer = new PeriodicTimer(Interval);
+
+        while (await timer.WaitForNextTickAsync(stoppingToken))
+        {
+            try
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var sweeper = scope.ServiceProvider.GetRequiredService<OverrideExpirySweeper>();
+                var result = await sweeper.SweepAsync(stoppingToken);
+
+                if (result.DidAnything)
+                {
+                    _logger.LogInformation(
+                        "Override sweep: {Expired} expired, {Overdue} retrospectives overdue.",
+                        result.Expired, result.RetrospectivesOverdue);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (Exception exception)
+            {
+                // A failed sweep must not take the host down; the next tick tries again.
+                _logger.LogError(exception, "Override expiry sweep failed.");
+            }
         }
     }
 }

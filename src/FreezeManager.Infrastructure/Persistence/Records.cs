@@ -1,5 +1,8 @@
 using FreezeManager.Domain.Calendar;
+using FreezeManager.Domain.Approvals;
+using FreezeManager.Domain.Audit;
 using FreezeManager.Domain.Changes;
+using FreezeManager.Domain.Overrides;
 using FreezeManager.Domain.Services;
 
 namespace FreezeManager.Infrastructure.Persistence;
@@ -189,6 +192,8 @@ public sealed class ChangeRequestRecord
 
     public List<ChangeAffectedServiceRecord> AffectedServices { get; set; } = new();
 
+    public List<ChangeApprovalRecord> Approvals { get; set; } = new();
+
     public ChangeRequest ToDomain() => new(
         ChangeReference.Create(ReferenceYear, ReferenceSequence),
         Title,
@@ -205,6 +210,13 @@ public sealed class ChangeRequestRecord
         BackoutPlan,
         State,
         UtcTime.ToOffset(UpdatedAtUtc));
+
+    public ChangeRequest ToDomainWithApprovals()
+    {
+        var change = ToDomain();
+        change.RehydrateApprovals(Approvals.Select(a => a.ToDomain()));
+        return change;
+    }
 
     /// <summary>Writes a domain aggregate back over this row.</summary>
     public void ApplyFrom(ChangeRequest change)
@@ -242,6 +254,32 @@ public sealed class ChangeRequestRecord
         {
             AffectedServices.Add(new ChangeAffectedServiceRecord { ServiceKey = key });
         }
+
+        // Approvals are add-only here. Clearing them is the aggregate's job when a change returns
+        // to draft, and that clearing is reflected by the domain handing back an empty list.
+        if (change.Approvals.Count == 0)
+        {
+            Approvals.Clear();
+        }
+        else
+        {
+            foreach (var approval in change.Approvals)
+            {
+                if (Approvals.Any(a => a.Role == approval.Role))
+                {
+                    continue;
+                }
+
+                Approvals.Add(new ChangeApprovalRecord
+                {
+                    Role = approval.Role,
+                    Approver = approval.Approver,
+                    Decision = approval.Decision,
+                    DecidedAtUtc = UtcTime.FromOffset(approval.DecidedAtUtc),
+                    Comment = approval.Comment
+                });
+            }
+        }
     }
 }
 
@@ -252,4 +290,175 @@ public sealed class ChangeAffectedServiceRecord
     public int ChangeRequestId { get; set; }
 
     public string ServiceKey { get; set; } = string.Empty;
+}
+
+public sealed class ChangeApprovalRecord
+{
+    public int Id { get; set; }
+
+    public int ChangeRequestId { get; set; }
+
+    public ApprovalRole Role { get; set; }
+
+    public string Approver { get; set; } = string.Empty;
+
+    public ApprovalDecision Decision { get; set; }
+
+    public DateTime DecidedAtUtc { get; set; }
+
+    public string? Comment { get; set; }
+
+    public ChangeApproval ToDomain() =>
+        new(Role, Approver, Decision, UtcTime.ToOffset(DecidedAtUtc), Comment);
+}
+
+public sealed class FreezeOverrideRecord
+{
+    public int Id { get; set; }
+
+    public string ChangeReference { get; set; } = string.Empty;
+
+    public string IncidentReference { get; set; } = string.Empty;
+
+    public string Justification { get; set; } = string.Empty;
+
+    public string RequestedBy { get; set; } = string.Empty;
+
+    public DateTime RequestedAtUtc { get; set; }
+
+    public int GrantDurationMinutes { get; set; }
+
+    public bool IsBreakGlass { get; set; }
+
+    public OverrideState State { get; set; }
+
+    public DateTime? GrantedAtUtc { get; set; }
+
+    public DateTime? ExpiresAtUtc { get; set; }
+
+    public DateTime? UsedAtUtc { get; set; }
+
+    public DateTime? RetrospectiveDueAtUtc { get; set; }
+
+    public DateTime? RetrospectiveCompletedAtUtc { get; set; }
+
+    public string? RetrospectiveNotes { get; set; }
+
+    /// <summary>Set once the sweeper has written the expiry audit entry, so it writes exactly one.</summary>
+    public bool ExpiryAudited { get; set; }
+
+    /// <summary>Set once the overdue-retrospective audit entry has been written.</summary>
+    public bool RetrospectiveOverdueAudited { get; set; }
+
+    public List<OverrideApprovalRecord> Approvals { get; set; } = new();
+
+    public FreezeOverride ToDomain() => FreezeOverride.Rehydrate(
+        ChangeReference,
+        IncidentReference,
+        Justification,
+        RequestedBy,
+        UtcTime.ToOffset(RequestedAtUtc),
+        TimeSpan.FromMinutes(GrantDurationMinutes),
+        IsBreakGlass,
+        State,
+        UtcTime.ToOffset(GrantedAtUtc),
+        UtcTime.ToOffset(ExpiresAtUtc),
+        UtcTime.ToOffset(UsedAtUtc),
+        UtcTime.ToOffset(RetrospectiveDueAtUtc),
+        UtcTime.ToOffset(RetrospectiveCompletedAtUtc),
+        RetrospectiveNotes,
+        Approvals.Select(a => a.ToDomain()));
+
+    public void ApplyFrom(FreezeOverride source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        ChangeReference = source.ChangeReference;
+        IncidentReference = source.IncidentReference;
+        Justification = source.Justification;
+        RequestedBy = source.RequestedBy;
+        RequestedAtUtc = UtcTime.FromOffset(source.RequestedAtUtc);
+        GrantDurationMinutes = (int)source.GrantDuration.TotalMinutes;
+        IsBreakGlass = source.IsBreakGlass;
+        State = source.State;
+        GrantedAtUtc = UtcTime.FromOffset(source.GrantedAtUtc);
+        ExpiresAtUtc = UtcTime.FromOffset(source.ExpiresAtUtc);
+        UsedAtUtc = UtcTime.FromOffset(source.UsedAtUtc);
+        RetrospectiveDueAtUtc = UtcTime.FromOffset(source.RetrospectiveDueAtUtc);
+        RetrospectiveCompletedAtUtc = UtcTime.FromOffset(source.RetrospectiveCompletedAtUtc);
+        RetrospectiveNotes = source.RetrospectiveNotes;
+
+        foreach (var approval in source.Approvals)
+        {
+            if (Approvals.Any(a => a.Role == approval.Role))
+            {
+                continue;
+            }
+
+            Approvals.Add(new OverrideApprovalRecord
+            {
+                Role = approval.Role,
+                Approver = approval.Approver,
+                Decision = approval.Decision,
+                DecidedAtUtc = UtcTime.FromOffset(approval.DecidedAtUtc),
+                Comment = approval.Comment
+            });
+        }
+    }
+}
+
+public sealed class OverrideApprovalRecord
+{
+    public int Id { get; set; }
+
+    public int FreezeOverrideId { get; set; }
+
+    public ApprovalRole Role { get; set; }
+
+    public string Approver { get; set; } = string.Empty;
+
+    public ApprovalDecision Decision { get; set; }
+
+    public DateTime DecidedAtUtc { get; set; }
+
+    public string? Comment { get; set; }
+
+    public ChangeApproval ToDomain() =>
+        new(Role, Approver, Decision, UtcTime.ToOffset(DecidedAtUtc), Comment);
+}
+
+/// <summary>
+/// One row of the audit log. Append-only: <see cref="AppendOnlyAuditInterceptor"/> refuses updates
+/// and deletes, and each row's hash covers the row before it.
+/// </summary>
+public sealed class AuditEntryRecord
+{
+    public long Sequence { get; set; }
+
+    public DateTime OccurredAtUtc { get; set; }
+
+    public string Actor { get; set; } = string.Empty;
+
+    public AuditAction Action { get; set; }
+
+    public string Subject { get; set; } = string.Empty;
+
+    public string Details { get; set; } = "{}";
+
+    public string PreviousHash { get; set; } = AuditEntry.GenesisHash;
+
+    public string Hash { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Rebuilds the domain entry from the stored fields.
+    /// </summary>
+    /// <remarks>
+    /// The constructor recomputes the hash from the contents, so a row whose stored hash was edited
+    /// produces a domain entry whose hash differs -- which is exactly what verification compares.
+    /// Use <see cref="StoredHash"/> for the value as written.
+    /// </remarks>
+    public AuditEntry ToDomain() => new(
+        Sequence, UtcTime.ToOffset(OccurredAtUtc), Actor, Action, Subject, Details, PreviousHash);
+
+    public string StoredHash => Hash;
 }

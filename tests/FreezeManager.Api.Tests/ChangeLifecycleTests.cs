@@ -106,9 +106,18 @@ public class ChangeLifecycleTests : IClassFixture<FreezeApiFactory>
     {
         var reference = await CreateDraftAsync(T.AddDays(-10), TimeSpan.FromHours(2));
 
+        var submit = await _client.PostEmptyAsync($"/api/changes/{reference}/submit");
+        Assert.Equal("Submitted", (await submit.ReadJsonAsync()).GetProperty("state").GetString());
+
+        // Trackside: three roles have to agree before a window can be confirmed.
+        await _client.ApproveChainAsync(reference);
+
+        var approved = await (await _client.GetAsync($"/api/changes/{reference}")).ReadJsonAsync();
+        Assert.Equal("Approved", approved.GetProperty("state").GetString());
+
         foreach (var (verb, expected) in new[]
                  {
-                     ("submit", "Submitted"), ("schedule", "Scheduled"), ("start", "Implementing"),
+                     ("schedule", "Scheduled"), ("start", "Implementing"),
                      ("complete", "Implemented"), ("close", "Closed")
                  })
         {

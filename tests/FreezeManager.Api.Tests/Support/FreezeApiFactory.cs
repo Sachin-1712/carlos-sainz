@@ -43,7 +43,7 @@ public sealed class FreezeApiFactory : WebApplicationFactory<Program>
         {
             services.RemoveAll<DbContextOptions<FreezeDbContext>>();
             services.RemoveAll<DbContextOptions>();
-            services.AddDbContext<FreezeDbContext>(options => options.UseSqlite(_connection, FreezeDbOptions.Apply));
+            services.AddDbContext<FreezeDbContext>(options => options.UseFreezeDefaults(_connection));
 
             services.RemoveAll<TimeProvider>();
             services.AddSingleton<TimeProvider>(new FixedTimeProvider(Now));

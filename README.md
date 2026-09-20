@@ -58,7 +58,7 @@ improvement metrics and anything AI-assisted are deliberately out of scope.
 | 1 | Domain: race calendar model, freeze engine, test suite | Done |
 | 2 | Persistence, calendar ingestion (live provider with seeded fallback) | Done |
 | 3 | API: change request lifecycle and freeze gate | Done |
-| 4 | Approval chains, emergency override, audit hash chain | Not started |
+| 4 | Approval chains, emergency override, audit hash chain | Done |
 | 5 | Minimal single-page freeze dashboard | Not started |
 
 Every design decision is written up in [`docs/decisions.md`](docs/decisions.md), one short entry
@@ -121,6 +121,18 @@ domain, and these are the ones worth reading:
   chain that does not exist yet.
 - Every state in the lifecycle is reachable from `Draft`, so a state added to the enum without being
   wired into the transition table fails the build.
+- Approvals are discarded when a change goes back to draft, so nobody approves a one-line config
+  edit and has it apply to the schema migration it was rewritten as.
+- A `Standard` change is pre-approved and advances on its own, but an override for one still needs
+  an approver: being pre-approved covers the change, not the weekend.
+- An audit row cannot be updated or deleted through the application at all; edited directly in the
+  database, the hash chain names the entry that changed.
+- Editing one entry and honestly recomputing its hash is still caught -- by the *next* entry's
+  back-link. Undoing that means rewriting every entry to the end of the log.
+- Length-prefixed hashing means field boundaries cannot be shifted to forge a match, a forgery that
+  would otherwise need no key at all.
+- An override that expires unused is written to the log exactly once, however often the sweeper
+  runs, so the expiry is history rather than an inference from the clock.
 
 ## Architecture
 
@@ -216,22 +228,103 @@ names, so there is no translation step between them where a mistake could hide.
 | `GET /api/freeze/status?serviceKey=&at=` | Is this service frozen, and for how long. Returns `activeFreezeWindow` / `nextFreezeWindow`. |
 | `GET /api/freeze/next-open-window?serviceKey=&hours=` | When could a change of this length run. |
 | `GET /api/freeze/windows?serviceKey=` | Every window for a service, merged. |
+| `GET` `POST` `/api/changes/{ref}/approvals` | The chain this change needs; record one role's decision. |
+| `GET` `POST` `/api/changes/{ref}/override` | Overrides raised; raise an emergency override. |
+| `POST /api/changes/{ref}/override/approvals` | Approve or reject an override. |
+| `POST /api/changes/{ref}/override/revoke` | Withdraw an override before it expires. |
+| `POST /api/changes/{ref}/override/retrospective` | Complete the retrospective a break-glass owes. |
+| `GET /api/audit?subject=` | The audit log, in sequence order. |
+| `GET /api/audit/verify` | Walk the hash chain and report any alteration. |
+| `POST /api/audit/sweep-overrides` | Run the expiry sweep now. Also runs on a timer. |
 | `GET /api/calendar/{season}` | The stored calendar, with each event's provenance. |
 | `POST /api/calendar/{season}/sync` | Pull from the provider and reconcile. |
 
 ### Lifecycle
 
 ```
-Draft -> Submitted -> Scheduled -> Implementing -> Implemented -> Closed
-   |          |            |             |
-   |          +-> Draft    +-> Submitted +-> Failed -> RolledBack -> Closed
-   |                                            |
-   +-> Cancelled <-------------------+          +-> Draft
+Draft -> Submitted -> Approved -> Scheduled -> Implementing -> Implemented -> Closed
+   |          |           |            |             |
+   |          +-> Rejected|            +-> Approved  +-> Failed -> RolledBack -> Closed
+   |          |           |                                |
+   |          +-> Draft <-+--------------------------------+
+   |
+   +-> Cancelled
 ```
 
-The freeze gate runs on `Draft -> Submitted` and `Submitted -> Scheduled`. Illegal moves are
-rejected with `409` and a list of the states the change may actually move to. Approval states are
-deliberately absent: they insert between `Submitted` and `Scheduled` in phase 4.
+The freeze gate runs on `Draft -> Submitted` and `Approved -> Scheduled` -- the two points at which
+a window is claimed. Approval sits between them and does not re-run the gate, because approving a
+change agrees to the work, not to the slot. Illegal moves are rejected with `409` and a list of the
+states the change may actually move to.
+
+## Approvals, overrides and the audit trail
+
+### The chain scales with the blast radius
+
+| Strictest tier touched | Who has to approve |
+| --- | --- |
+| Corporate | Service owner |
+| Race support | Service owner, head of IT |
+| Trackside | Trackside IT lead, head of IT, race engineering nominee |
+
+Trackside adds race engineering because touching a trackside system during a session has sporting
+consequences, not only IT ones. A standard change is pre-approved and skips the chain -- but it is
+still subject to the freeze, and an override for one still needs an approver.
+
+### Emergency override
+
+An override is the only way through a freeze, and it is a control rather than a bypass because it is
+three things at once:
+
+- **Attributable** -- a linked incident reference and a written justification, both required.
+- **Time-boxed** -- a grant expires on its own (two hours by default, twelve maximum), and the
+  expiry is written to the audit log by a sweeper, so a standing exemption cannot accumulate.
+- **Accountable** -- it takes the same approval chain the change's tier demands.
+
+**Break-glass** is the narrower door for when the chain genuinely cannot be assembled at 02:00: one
+approver, but only the head of IT or the trackside IT lead, and it costs a mandatory retrospective
+within 24 hours. Overdue retrospectives are flagged by the same sweeper. It exists because the
+alternative is people working around the tool entirely.
+
+### What an emergency looks like in the log
+
+Raising an emergency change during a race weekend, being refused, overriding it and going ahead
+produces this, each entry hash-linked to the one before it:
+
+```
+#1   ChangeRaised               s.sindhe                 98f818472d... <- 0000000000...
+#2   ChangeBlockedByFreeze      s.sindhe                 36cd3bb86a... <- 98f818472d...
+#3   OverrideRequested          s.sindhe                 15a0e12014... <- 36cd3bb86a...
+#4   OverrideApprovalRecorded   TracksideItLead.person   bd84e63341... <- 15a0e12014...
+#5   OverrideApprovalRecorded   HeadOfIt.person          065716aa3c... <- bd84e63341...
+#6   ChangeBlockedByFreeze      s.sindhe                 ec72418810... <- 065716aa3c...
+#7   OverrideApprovalRecorded   r.nominee                87b6112218... <- ec72418810...
+#8   OverrideGranted            r.nominee                23957750f2... <- 87b6112218...
+#9   OverrideUsed               s.sindhe                 5f819fdea0... <- 23957750f2...
+#10  ChangeSubmitted            s.sindhe                 e1d5575bdc... <- 5f819fdea0...
+```
+
+Both refused attempts (#2, #6) are in the log. A refusal is exactly the thing a change process needs
+to be able to count later: a rising number of them says a freeze policy is wrong somewhere.
+
+### Tamper evidence, and its limits
+
+`GET /api/audit/verify` walks the chain. Editing a row directly in the database -- behind the
+application, where the append-only interceptor cannot reach -- is caught:
+
+```
+HTTP 409
+  isValid:             False
+  firstBrokenSequence: 3
+  reason:              Entry 3 has been altered: the stored hash does not match its contents.
+```
+
+There are two layers: a `SaveChanges` interceptor refuses any update or delete of an audit row, and
+the hash chain catches anyone who goes around it.
+
+The honest claim is **detection, not prevention**. Someone with write access could recompute the
+whole chain, and entries removed from the *end* cannot be detected by a chain alone -- nothing links
+forward. The verify response says so in a `scope` field rather than letting a green tick be
+over-read.
 
 ## Running it
 

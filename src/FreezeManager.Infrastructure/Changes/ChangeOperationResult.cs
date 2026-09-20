@@ -1,4 +1,5 @@
 using FreezeManager.Domain.Changes;
+using FreezeManager.Domain.Overrides;
 
 namespace FreezeManager.Infrastructure.Changes;
 
@@ -28,12 +29,14 @@ public sealed class ChangeOperationResult
         ChangeOperationStatus status,
         ChangeRequest? change,
         FreezeGateDecision? gateDecision,
-        IReadOnlyList<string> problems)
+        IReadOnlyList<string> problems,
+        FreezeOverride? usedOverride = null)
     {
         Status = status;
         Change = change;
         GateDecision = gateDecision;
         Problems = problems;
+        UsedOverride = usedOverride;
     }
 
     public ChangeOperationStatus Status { get; }
@@ -45,10 +48,20 @@ public sealed class ChangeOperationResult
 
     public IReadOnlyList<string> Problems { get; }
 
+    /// <summary>
+    /// Set when the freeze gate refused and a granted override carried the change through anyway.
+    /// Its presence is the difference between "the gate allowed this" and "the gate refused and
+    /// someone accountable overruled it", which a caller must not have to infer.
+    /// </summary>
+    public FreezeOverride? UsedOverride { get; }
+
     public bool Succeeded => Status == ChangeOperationStatus.Succeeded;
 
-    public static ChangeOperationResult Ok(ChangeRequest change, FreezeGateDecision? decision = null) =>
-        new(ChangeOperationStatus.Succeeded, change, decision, Array.Empty<string>());
+    public static ChangeOperationResult Ok(
+        ChangeRequest change,
+        FreezeGateDecision? decision = null,
+        FreezeOverride? usedOverride = null) =>
+        new(ChangeOperationStatus.Succeeded, change, decision, Array.Empty<string>(), usedOverride);
 
     public static ChangeOperationResult NotFound(string reference) =>
         new(ChangeOperationStatus.NotFound, null, null, new[] { $"No change with reference '{reference}'." });

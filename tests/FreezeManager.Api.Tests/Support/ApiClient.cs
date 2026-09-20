@@ -24,6 +24,26 @@ internal static class ApiClient
     public static Task<HttpResponseMessage> PostJsonAsync<T>(this HttpClient client, string url, T body) =>
         client.PostAsJsonAsync(url, body, Json);
 
+    /// <summary>
+    /// Walks a change through the approval chain its tier demands. Trackside needs three roles;
+    /// race support two; corporate one.
+    /// </summary>
+    public static async Task ApproveChainAsync(this HttpClient client, string reference, params string[] roles)
+    {
+        var chain = roles.Length > 0
+            ? roles
+            : new[] { "TracksideItLead", "HeadOfIt", "RaceEngineeringNominee" };
+
+        foreach (var role in chain)
+        {
+            var response = await client.PostJsonAsync(
+                $"/api/changes/{reference}/approvals",
+                new { role, approver = $"{role}.person", decision = "Approved" });
+
+            response.EnsureSuccessStatusCode();
+        }
+    }
+
     /// <summary>Creates a complete draft that is ready to be submitted.</summary>
     public static object CompleteDraft(
         DateTimeOffset start,

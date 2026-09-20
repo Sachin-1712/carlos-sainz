@@ -4,17 +4,23 @@ namespace FreezeManager.Domain.Changes;
 /// Where a change is in its lifecycle.
 /// </summary>
 /// <remarks>
-/// Approval states are deliberately absent: they belong to the approval chain and insert between
-/// <see cref="Submitted"/> and <see cref="Scheduled"/> when that lands. Because the transitions are
-/// a table rather than a set of conditionals, inserting them is an edit to the table.
+/// <see cref="Approved"/> and <see cref="Rejected"/> were inserted between <see cref="Submitted"/>
+/// and <see cref="Scheduled"/> when the approval chain landed. Because the transitions are a table
+/// rather than a set of conditionals, that was an edit to the table.
 /// </remarks>
 public enum ChangeState
 {
     /// <summary>Being written. The only state in which a change can be edited or deleted.</summary>
     Draft = 0,
 
-    /// <summary>Handed in and past the freeze gate. Awaiting a confirmed window.</summary>
+    /// <summary>Handed in and past the freeze gate. Awaiting its approval chain.</summary>
     Submitted = 1,
+
+    /// <summary>The approval chain is satisfied. Awaiting a confirmed window.</summary>
+    Approved = 9,
+
+    /// <summary>An approver said no. Reworked as a draft, or cancelled.</summary>
+    Rejected = 10,
 
     /// <summary>Has a confirmed window that cleared the freeze gate.</summary>
     Scheduled = 2,

@@ -1,4 +1,9 @@
+using FreezeManager.Domain.Approvals;
+using FreezeManager.Domain.Audit;
 using FreezeManager.Domain.Changes;
+using FreezeManager.Domain.Overrides;
+using FreezeManager.Infrastructure.Audit;
+using FreezeManager.Infrastructure.Overrides;
 using FreezeManager.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -17,20 +22,28 @@ public sealed class ChangeRequestService
 {
     private readonly FreezeDbContext _db;
     private readonly FreezeContextFactory _contextFactory;
+    private readonly AuditWriter _audit;
+    private readonly OverrideService _overrides;
     private readonly TimeProvider _time;
     private readonly int _season;
 
     public ChangeRequestService(
         FreezeDbContext db,
         FreezeContextFactory contextFactory,
+        AuditWriter audit,
+        OverrideService overrides,
         int season,
         TimeProvider? time = null)
     {
         ArgumentNullException.ThrowIfNull(db);
         ArgumentNullException.ThrowIfNull(contextFactory);
+        ArgumentNullException.ThrowIfNull(audit);
+        ArgumentNullException.ThrowIfNull(overrides);
 
         _db = db;
         _contextFactory = contextFactory;
+        _audit = audit;
+        _overrides = overrides;
         _season = season;
         _time = time ?? TimeProvider.System;
     }
@@ -40,7 +53,7 @@ public sealed class ChangeRequestService
     public async Task<ChangeRequest?> GetAsync(string reference, CancellationToken cancellationToken = default)
     {
         var record = await FindAsync(reference, track: false, cancellationToken);
-        return record?.ToDomain();
+        return record?.ToDomainWithApprovals();
     }
 
     public async Task<IReadOnlyList<ChangeRequest>> ListAsync(
@@ -48,7 +61,10 @@ public sealed class ChangeRequestService
         string? affectedServiceKey = null,
         CancellationToken cancellationToken = default)
     {
-        var query = _db.ChangeRequests.AsNoTracking().Include(c => c.AffectedServices).AsQueryable();
+        var query = _db.ChangeRequests.AsNoTracking()
+            .Include(c => c.AffectedServices)
+            .Include(c => c.Approvals)
+            .AsQueryable();
 
         if (state.HasValue)
         {
@@ -65,7 +81,22 @@ public sealed class ChangeRequestService
             .ThenByDescending(c => c.ReferenceSequence)
             .ToListAsync(cancellationToken);
 
-        return records.Select(r => r.ToDomain()).ToArray();
+        return records.Select(r => r.ToDomainWithApprovals()).ToArray();
+    }
+
+    /// <summary>The approval chain a change needs, given the tiers it touches and how it was raised.</summary>
+    public async Task<ApprovalRequirement> RequirementForAsync(ChangeRequest change, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(change);
+
+        var context = await _contextFactory.CreateAsync(_season, cancellationToken);
+
+        var tiers = change.AffectedServiceKeys
+            .Where(context.TiersByServiceKey.ContainsKey)
+            .Select(k => context.TiersByServiceKey[k])
+            .ToArray();
+
+        return ApprovalRequirement.For(tiers, change.Type);
     }
 
     // ------------------------------------------------------------------ writes
@@ -104,6 +135,12 @@ public sealed class ChangeRequestService
         var record = new ChangeRequestRecord();
         record.ApplyFrom(change);
         _db.ChangeRequests.Add(record);
+
+        await _audit.AppendAsync(
+            change.RequestedBy, AuditAction.ChangeRaised, change.Reference.ToString(),
+            new { change.Title, type = change.Type.ToString(), risk = change.Risk.ToString(), services = change.AffectedServiceKeys },
+            cancellationToken);
+
         await _db.SaveChangesAsync(cancellationToken);
 
         return ChangeOperationResult.Ok(change);
@@ -123,7 +160,7 @@ public sealed class ChangeRequestService
             return ChangeOperationResult.NotFound(reference);
         }
 
-        var change = record.ToDomain();
+        var change = record.ToDomainWithApprovals();
 
         try
         {
@@ -150,6 +187,12 @@ public sealed class ChangeRequestService
         }
 
         record.ApplyFrom(change);
+
+        await _audit.AppendAsync(
+            change.RequestedBy, AuditAction.ChangeUpdated, change.Reference.ToString(),
+            new { change.Title, window = new { change.RequestedStartUtc, change.RequestedEndUtc } },
+            cancellationToken);
+
         await _db.SaveChangesAsync(cancellationToken);
 
         return ChangeOperationResult.Ok(change);
@@ -166,7 +209,7 @@ public sealed class ChangeRequestService
             return ChangeOperationResult.NotFound(reference);
         }
 
-        var change = record.ToDomain();
+        var change = record.ToDomainWithApprovals();
 
         if (!change.IsEditable)
         {
@@ -176,6 +219,12 @@ public sealed class ChangeRequestService
         }
 
         _db.ChangeRequests.Remove(record);
+
+        // The change is gone; the record that it existed and was deleted is not.
+        await _audit.AppendAsync(
+            change.RequestedBy, AuditAction.ChangeDeleted, change.Reference.ToString(),
+            new { change.Title }, cancellationToken);
+
         await _db.SaveChangesAsync(cancellationToken);
 
         return ChangeOperationResult.Ok(change);
@@ -201,7 +250,7 @@ public sealed class ChangeRequestService
             return ChangeOperationResult.NotFound(reference);
         }
 
-        var change = record.ToDomain();
+        var change = record.ToDomainWithApprovals();
 
         if (!ChangeStateMachine.CanTransition(change.State, target))
         {
@@ -222,7 +271,30 @@ public sealed class ChangeRequestService
             }
         }
 
+        // Moving to Approved is not something a caller asserts; it is something the approval chain
+        // earns. Checking it here rather than in the endpoint means no route can bypass it.
+        if (target == ChangeState.Approved)
+        {
+            var requirement = await RequirementForAsync(change, cancellationToken);
+
+            if (ApprovalRequirement.IsRejected(change.Approvals))
+            {
+                return ChangeOperationResult.Invalid(
+                    change, new[] { "An approver rejected this change. Reject it or return it to draft." });
+            }
+
+            var outstanding = requirement.OutstandingRoles(change.Approvals);
+
+            if (outstanding.Count > 0)
+            {
+                return ChangeOperationResult.Invalid(
+                    change,
+                    new[] { $"The approval chain is not complete. Still required: {string.Join(", ", outstanding)}." });
+            }
+        }
+
         FreezeGateDecision? decision = null;
+        FreezeOverride? usedOverride = null;
 
         if (ChangeStateMachine.RequiresFreezeCheck(change.State, target))
         {
@@ -249,7 +321,29 @@ public sealed class ChangeRequestService
 
             if (!decision.IsAllowed)
             {
-                return ChangeOperationResult.Blocked(change, decision);
+                // A blocked change may still proceed on a granted, unexpired override. This is the
+                // only way through a freeze, and spending it is recorded.
+                usedOverride = await _overrides.InForceAsync(change.Reference.ToString(), cancellationToken);
+
+                if (usedOverride is null)
+                {
+                    await _audit.AppendAsync(
+                        change.RequestedBy,
+                        AuditAction.ChangeBlockedByFreeze,
+                        change.Reference.ToString(),
+                        new
+                        {
+                            requestedState = target.ToString(),
+                            window = new { change.RequestedStartUtc, change.RequestedEndUtc },
+                            conflicts = decision.Conflicts.Select(c => c.Reason).ToArray(),
+                            suggestedOpenWindowStartUtc = decision.SuggestedOpenWindow?.StartUtc
+                        },
+                        cancellationToken);
+
+                    await _db.SaveChangesAsync(cancellationToken);
+
+                    return ChangeOperationResult.Blocked(change, decision);
+                }
             }
         }
 
@@ -266,17 +360,167 @@ public sealed class ChangeRequestService
             return ChangeOperationResult.IllegalTransition(change, target);
         }
 
+        if (usedOverride is not null)
+        {
+            await MarkOverrideUsedAsync(change, usedOverride, now, cancellationToken);
+        }
+
+        await _audit.AppendAsync(
+            change.RequestedBy,
+            AuditActionFor(target),
+            change.Reference.ToString(),
+            new
+            {
+                state = target.ToString(),
+                window = new { change.RequestedStartUtc, change.RequestedEndUtc },
+                viaOverride = usedOverride is not null,
+                incidentReference = usedOverride?.IncidentReference
+            },
+            cancellationToken);
+
+        // A change that clears its chain the moment it is submitted -- a pre-approved standard
+        // change -- should not sit waiting for an approval nobody owes it.
+        if (target == ChangeState.Submitted)
+        {
+            var requirement = await RequirementForAsync(change, cancellationToken);
+
+            if (requirement.IsPreApproved)
+            {
+                change.TransitionTo(ChangeState.Approved, now);
+
+                await _audit.AppendAsync(
+                    "system:standard-change",
+                    AuditAction.ChangeApproved,
+                    change.Reference.ToString(),
+                    new { rationale = requirement.Rationale },
+                    cancellationToken);
+            }
+        }
+
         record.ApplyFrom(change);
         await _db.SaveChangesAsync(cancellationToken);
 
-        return ChangeOperationResult.Ok(change, decision);
+        return ChangeOperationResult.Ok(change, decision, usedOverride);
     }
+
+    /// <summary>Records one role's decision, and completes the chain when it is the last one.</summary>
+    public async Task<ChangeOperationResult> RecordApprovalAsync(
+        string reference,
+        ApprovalRole role,
+        string approver,
+        ApprovalDecision decision,
+        string? comment = null,
+        CancellationToken cancellationToken = default)
+    {
+        var record = await FindAsync(reference, track: true, cancellationToken);
+
+        if (record is null)
+        {
+            return ChangeOperationResult.NotFound(reference);
+        }
+
+        var change = record.ToDomainWithApprovals();
+        var requirement = await RequirementForAsync(change, cancellationToken);
+        var now = _time.GetUtcNow();
+
+        try
+        {
+            change.RecordApproval(new ChangeApproval(role, approver, decision, now, comment), requirement, now);
+        }
+        catch (ChangeValidationException exception)
+        {
+            return ChangeOperationResult.Invalid(change, exception.Problems);
+        }
+
+        await _audit.AppendAsync(
+            approver,
+            AuditAction.ApprovalRecorded,
+            change.Reference.ToString(),
+            new { role = role.ToString(), decision = decision.ToString(), comment },
+            cancellationToken);
+
+        if (decision == ApprovalDecision.Rejected)
+        {
+            change.TransitionTo(ChangeState.Rejected, now);
+
+            await _audit.AppendAsync(
+                approver, AuditAction.ChangeRejected, change.Reference.ToString(),
+                new { role = role.ToString(), comment }, cancellationToken);
+        }
+        else if (requirement.IsSatisfiedBy(change.Approvals))
+        {
+            change.TransitionTo(ChangeState.Approved, now);
+
+            await _audit.AppendAsync(
+                approver, AuditAction.ChangeApproved, change.Reference.ToString(),
+                new { chain = requirement.Roles.Select(r => r.ToString()).ToArray() }, cancellationToken);
+        }
+
+        record.ApplyFrom(change);
+        await _db.SaveChangesAsync(cancellationToken);
+
+        return ChangeOperationResult.Ok(change);
+    }
+
+    private async Task MarkOverrideUsedAsync(
+        ChangeRequest change,
+        FreezeOverride granted,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var overrideRecord = await _db.FreezeOverrides
+            .Include(o => o.Approvals)
+            .Where(o => o.ChangeReference == change.Reference.ToString() && o.State == OverrideState.Granted)
+            .OrderByDescending(o => o.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (overrideRecord is null)
+        {
+            return;
+        }
+
+        var request = overrideRecord.ToDomain();
+        request.MarkUsed(now);
+        overrideRecord.ApplyFrom(request);
+
+        await _audit.AppendAsync(
+            change.RequestedBy,
+            AuditAction.OverrideUsed,
+            change.Reference.ToString(),
+            new
+            {
+                incidentReference = request.IncidentReference,
+                breakGlass = request.IsBreakGlass,
+                grantedAtUtc = request.GrantedAtUtc,
+                expiresAtUtc = request.ExpiresAtUtc
+            },
+            cancellationToken);
+    }
+
+    private static AuditAction AuditActionFor(ChangeState state) => state switch
+    {
+        ChangeState.Submitted => AuditAction.ChangeSubmitted,
+        ChangeState.Approved => AuditAction.ChangeApproved,
+        ChangeState.Rejected => AuditAction.ChangeRejected,
+        ChangeState.Scheduled => AuditAction.ChangeScheduled,
+        ChangeState.Draft => AuditAction.ChangeWithdrawn,
+        ChangeState.Cancelled => AuditAction.ChangeCancelled,
+        ChangeState.Implementing => AuditAction.ImplementationStarted,
+        ChangeState.Implemented => AuditAction.ImplementationCompleted,
+        ChangeState.Failed => AuditAction.ImplementationFailed,
+        ChangeState.RolledBack => AuditAction.ChangeRolledBack,
+        ChangeState.Closed => AuditAction.ChangeClosed,
+        _ => AuditAction.ChangeUpdated
+    };
 
     // ------------------------------------------------------------------ helpers
 
     private Task<ChangeRequestRecord?> FindAsync(string reference, bool track, CancellationToken cancellationToken)
     {
-        var query = _db.ChangeRequests.Include(c => c.AffectedServices).AsQueryable();
+        var query = _db.ChangeRequests
+            .Include(c => c.AffectedServices)
+            .Include(c => c.Approvals)
+            .AsQueryable();
 
         if (!track)
         {

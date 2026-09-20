@@ -8,7 +8,10 @@ public class ChangeStateMachineTests
     [Theory]
     [InlineData(ChangeState.Draft, ChangeState.Submitted)]
     [InlineData(ChangeState.Draft, ChangeState.Cancelled)]
-    [InlineData(ChangeState.Submitted, ChangeState.Scheduled)]
+    [InlineData(ChangeState.Submitted, ChangeState.Approved)]
+    [InlineData(ChangeState.Submitted, ChangeState.Rejected)]
+    [InlineData(ChangeState.Approved, ChangeState.Scheduled)]
+    [InlineData(ChangeState.Rejected, ChangeState.Draft)]
     [InlineData(ChangeState.Submitted, ChangeState.Draft)]
     [InlineData(ChangeState.Scheduled, ChangeState.Implementing)]
     [InlineData(ChangeState.Implementing, ChangeState.Implemented)]
@@ -22,6 +25,10 @@ public class ChangeStateMachineTests
     }
 
     [Theory]
+    [InlineData(ChangeState.Submitted, ChangeState.Scheduled)]    // cannot skip the approval chain
+    [InlineData(ChangeState.Rejected, ChangeState.Scheduled)]     // a rejection never proceeds
+    [InlineData(ChangeState.Rejected, ChangeState.Approved)]      // nor is it approved after the fact
+    [InlineData(ChangeState.Draft, ChangeState.Approved)]         // approval requires a submission
     [InlineData(ChangeState.Draft, ChangeState.Scheduled)]        // cannot skip submission
     [InlineData(ChangeState.Draft, ChangeState.Implementing)]     // cannot skip the gate entirely
     [InlineData(ChangeState.Submitted, ChangeState.Implementing)] // cannot implement an unscheduled change
@@ -78,7 +85,11 @@ public class ChangeStateMachineTests
     public void Only_submission_and_scheduling_require_the_freeze_gate()
     {
         Assert.True(ChangeStateMachine.RequiresFreezeCheck(ChangeState.Draft, ChangeState.Submitted));
-        Assert.True(ChangeStateMachine.RequiresFreezeCheck(ChangeState.Submitted, ChangeState.Scheduled));
+        Assert.True(ChangeStateMachine.RequiresFreezeCheck(ChangeState.Approved, ChangeState.Scheduled));
+
+        // Approving a change agrees to the work, not to the slot. The slot is re-checked when it
+        // is confirmed, so approval itself does not re-run the gate.
+        Assert.False(ChangeStateMachine.RequiresFreezeCheck(ChangeState.Submitted, ChangeState.Approved));
 
         Assert.False(ChangeStateMachine.RequiresFreezeCheck(ChangeState.Scheduled, ChangeState.Implementing));
         Assert.False(ChangeStateMachine.RequiresFreezeCheck(ChangeState.Draft, ChangeState.Cancelled));

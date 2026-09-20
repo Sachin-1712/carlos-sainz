@@ -389,3 +389,141 @@ the repository claims not to have is printed at every startup.
 
 **Say:** "It was a real warning about a real cartesian product. I fixed it where it cannot come
 back rather than where it happened to appear."
+
+---
+
+## Phase 4 — approvals, override and audit
+
+### 28. The approval chain scales with the strictest tier a change touches
+
+**Chose:** corporate needs the service owner; race support adds the head of IT; trackside adds a
+race engineering nominee. A change touching several tiers takes the chain of the strictest, the same
+rule the freeze itself uses (decision 22).
+
+**Why:** the chain should track the consequence of getting it wrong. Breaking the intranet is an IT
+problem. Breaking telemetry during a session is a sporting one, and the people who carry that
+consequence should have a say before it happens, not after.
+
+**If wrong:** either every trivial change queues behind three approvers until people route around
+the process, or a trackside change ships on one person's judgement.
+
+**Say:** "The chain is as long as the blast radius. Roles, not names -- a chain written in names
+stops working the day someone leaves."
+
+### 29. A standard change is pre-approved, but not pre-permitted
+
+**Chose:** `ChangeType.Standard` yields an empty chain and auto-advances to `Approved` on
+submission. It is still gated by the freeze, still audited, and an *override* for one still needs an
+approver.
+
+**Why:** that is what "standard change" means in ITSM -- the risk was assessed once, in advance. But
+being pre-approved is about the work; going through a freeze is a separate question that nobody
+pre-approved.
+
+**If wrong:** classifying a change as standard becomes a way to deploy during parc ferme unattended.
+
+**Say:** "Pre-approved covers the change. It does not cover the weekend."
+
+### 30. Approvals are discarded when a change returns to draft
+
+**Chose:** `TransitionTo(Draft)` clears the recorded approvals.
+
+**Why:** an approval is of a specific change, not of a change reference. Without this, someone
+approves a one-line config edit, the author withdraws it, rewrites it as a schema migration, and
+resubmits carrying the old approval.
+
+**If wrong:** the audit trail shows three people approving something none of them read.
+
+**Say:** "Approval attaches to what was written, not to the ticket number."
+
+### 31. An override is attributable, time-boxed and accountable
+
+**Chose:** every override requires a linked incident reference and a justification of at least 30
+characters; a grant expires on its own (2 hours by default, 12 maximum); and it takes the same
+approval chain the change's tier demands.
+
+**Why:** those three properties are what separate a control from a bypass. Without attribution you
+cannot review it; without expiry a standing exemption accumulates; without a chain it is one
+person's decision at 2am.
+
+**If wrong:** the override becomes the normal path, and the freeze becomes advisory in practice
+while still claiming to block.
+
+**Say:** "An override is not permission to ignore the freeze. It is a recorded, expiring, approved
+exception to it."
+
+### 32. Expiry is an event, not a calculation
+
+**Chose:** a sweeper notices elapsed grants, moves them to `Expired`, and writes an audit entry. A
+flag on the row means exactly one entry is written no matter how often the sweep runs.
+
+**Why:** an override that quietly stops working leaves no trace that permission was ever held.
+Inferring expiry from a timestamp at read time gives you the current state but no history, and the
+question a reviewer asks is "how many overrides were granted last month and what happened to them".
+
+**If wrong:** the log records grants and uses but never the grants nobody used, so the override rate
+looks lower than it was.
+
+**Say:** "If it only exists as a comparison against the clock, it never happened as far as the
+record is concerned."
+
+### 33. Break-glass is a narrower door, not an open one
+
+**Chose:** a single approver, but only the head of IT or the trackside IT lead, and it costs a
+mandatory retrospective within 24 hours. Overdue retrospectives are flagged by the same sweeper.
+
+**Why:** pretending break-glass does not happen is how you get shadow processes -- at 02:00 in
+Suzuka you cannot assemble three people, and someone will act anyway. Better to give that a lit path
+with a bill attached than to leave it outside the system.
+
+**If wrong:** either the emergency path is unusable when it is actually needed, or it becomes the
+cheap way to skip the chain.
+
+**Say:** "It exists because the alternative is people working around the tool. The retrospective is
+what stops it becoming the default."
+
+### 34. Audit entries are hash-chained, and the claim is detection, not prevention
+
+**Chose:** each entry's SHA-256 covers its own contents and the previous entry's hash. Fields are
+length-prefixed before hashing. `GET /api/audit/verify` walks the chain and reports where it first
+breaks.
+
+**Why:** length prefixes matter more than they look. With a plain separator, an actor `"a|b"` with
+subject `"c"` hashes identically to actor `"a"` with subject `"b|c"` -- a forgery needing no key.
+And the honest claim is detection: someone with write access could recompute the whole chain. The
+response says so in a `scope` field rather than letting a green tick be over-read.
+
+**If wrong:** the project claims tamper-proofing it does not have, which is worse than claiming
+nothing.
+
+**Say:** "It makes tampering detectable and expensive, not impossible. Entries removed from the end
+cannot be detected by a chain alone, and the endpoint says that out loud."
+
+### 35. Append-only is enforced in the data layer, not by convention
+
+**Chose:** a `SaveChanges` interceptor throws on any update or delete of an audit row.
+`UseFreezeDefaults` bundles it with the provider options so every host gets it.
+
+**Why:** the chain detects tampering after the fact; the interceptor stops the ordinary way of doing
+it happening at all. Bundling it into the options is the part that matters: when it was applied only
+in `Program.cs`, the test hosts silently lacked the guarantee, and a test caught it.
+
+**If wrong:** a stray `SaveChanges` on a tracked audit entity rewrites history, and only the next
+verification notices.
+
+**Say:** "Two layers. The interceptor stops the application; the hash chain catches anyone who goes
+around it."
+
+### 36. A success that needed an override says so in the response
+
+**Chose:** when the gate refuses and a granted override carries the change through, the response
+carries `proceededUnderOverride` with the incident reference alongside the `Blocked` gate outcome.
+
+**Why:** the raw response otherwise reads `state: Submitted` next to `freezeGate: Blocked`, and a
+caller has to infer what happened. That is the same class of ambiguity as the `nextWindow` naming
+collision (decision 25), caught the same way -- by reading real output rather than a test.
+
+**If wrong:** a UI shows a success and a refusal side by side and picks one.
+
+**Say:** "Both facts are true: the gate refused, and it went ahead. The response states both rather
+than leaving the reader to reconcile them."
