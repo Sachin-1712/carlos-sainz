@@ -1,5 +1,6 @@
 using FreezeManager.Domain.Calendar;
 using FreezeManager.Infrastructure.CalendarSync;
+using FreezeManager.Infrastructure.CalendarSync.Seed;
 using FreezeManager.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -71,6 +72,7 @@ public static class CalendarEndpoints
                 .AsNoTracking()
                 .Where(r => r.Season == season && r.Succeeded)
                 .OrderByDescending(r => r.StartedAtUtc)
+                .ThenByDescending(r => r.Id)
                 .FirstOrDefaultAsync(cancellationToken);
 
             var droppedByIngestion = lastRun?.SkippedRoundsJson is null
@@ -137,11 +139,53 @@ public static class CalendarEndpoints
         })
         .WithSummary("Pull a season from the calendar provider and reconcile it into the store.");
 
+        group.MapGet("/{season:int}/seed-export", async (
+            int season,
+            FreezeDbContext db,
+            CancellationToken cancellationToken) =>
+        {
+            var export = await SeedExporter.BuildAsync(db, season, cancellationToken);
+
+            if (export.ActiveRoundCount == 0)
+            {
+                return Results.NotFound(new { error = $"Nothing stored for season {season} to export." });
+            }
+
+            // Returned as a document rather than written to disk: a web request should not reach
+            // into the repository. Redirect it to data/seed/calendar-{season}.json.
+            return Results.Text(export.Json, "application/json");
+        })
+        .WithSummary("Regenerate the bundled seed from the stored calendar. Pipe it over data/seed/.");
+
+        group.MapGet("/{season:int}/seed-drift", async (
+            int season,
+            FreezeDbContext db,
+            SeedPathProvider seeds,
+            CancellationToken cancellationToken) =>
+        {
+            var report = await SeedDriftCheck.InspectAsync(db, seeds.CalendarPath, season, cancellationToken);
+
+            return Results.Json(
+                new
+                {
+                    report.Season,
+                    report.SeedRoundCount,
+                    report.LastVerifiedRoundCount,
+                    report.SeedIsVerified,
+                    report.HasDrifted,
+                    report.Problem
+                },
+                // Drift is a finding: the fallback would describe the wrong season.
+                statusCode: report.HasDrifted ? StatusCodes.Status409Conflict : StatusCodes.Status200OK);
+        })
+        .WithSummary("Check the bundled seed against the last sync from a published source.");
+
         group.MapGet("/sync-runs", async (FreezeDbContext db, CancellationToken cancellationToken) =>
         {
             var runs = await db.CalendarSyncRuns
                 .AsNoTracking()
                 .OrderByDescending(r => r.StartedAtUtc)
+                .ThenByDescending(r => r.Id)
                 .Take(25)
                 .ToListAsync(cancellationToken);
 

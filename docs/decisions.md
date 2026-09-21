@@ -620,3 +620,98 @@ the worst kind of broken, and precisely what a reviewer cloning the repository w
 
 **Say:** "It rendered and it was dead. Found it by driving the real browser rather than trusting the
 200."
+
+---
+
+## Post-review fixes
+
+### 43. The seed is generated from a verified sync, not maintained by hand
+
+**Chose:** `SeedExporter` writes the bundled seed out of a calendar that has already been synced.
+`GET /api/calendar/{season}/seed-export` returns it; one redirect refreshes the file.
+
+**Why:** the 2026 season changed under the project — two rounds cancelled, one replaced — and the
+hand-written seed did not. A stale fallback is not an inert file: when upstream is unreachable the
+engine falls back to it and computes freeze windows for races that are not happening while missing
+ones that are. Generating it from real data makes refreshing it one command instead of an editing
+exercise nobody remembers to do.
+
+**If wrong:** the fallback silently describes a season that no longer exists, which is the same
+failure as a missing round except it looks fine.
+
+**Say:** "A fallback nobody refreshes is a liability. Making it a build artifact of a real sync is
+what stops it rotting."
+
+### 44. Seed drift is checked against the last sync from a published source
+
+**Chose:** every sync records how many active rounds it stored and whether it came from upstream.
+The seed's round count is compared against the most recent verified one, at startup and at
+`GET /api/calendar/{season}/seed-drift`.
+
+**Why:** "is the fallback still right?" has to be answerable without a race weekend to prove it
+wrong. Comparing against the last *verified* sync specifically matters, because comparing against
+the seed's own fallback data would compare the file to itself and always agree.
+
+**If wrong:** drift is discovered during the outage the fallback exists for.
+
+**Say:** "The seed is checked against the last thing we know was real, not against whatever we
+happen to be running on."
+
+### 45. Sync runs are ordered by timestamp and then identity
+
+**Chose:** every "most recent run" query orders by `StartedAtUtc` **and then** by `Id`, both
+descending.
+
+**Why:** two syncs can share a timestamp — a re-sync moments after the first, or any test with a
+fixed clock — and ordering by timestamp alone then returns an arbitrary one of them. A drift check
+that reads the wrong run reports clean when it is not.
+
+**If wrong:** the check is right most of the time, which is the worst failure mode for a check.
+
+**Say:** "Found it because two runs in a fixed-clock test tied, and the tie was being broken by
+whatever the database felt like returning."
+
+### 46. The emergency override is reachable from the interface
+
+**Chose:** when an emergency change is refused, the page offers the override: incident reference,
+justification, the approval chain for that tier with a control per role, and the grant with its
+expiry on screen. Submitting under the grant is the *same* call as an ordinary submit.
+
+**Why:** an override that only exists over HTTP is a feature nobody can be shown, and the override
+is the part that makes the freeze a control rather than a wall. Keeping the submit call identical
+matters too: the gate still refuses, and the grant is what carries the change past it — which is
+why the result reports both facts rather than pretending the gate allowed it.
+
+**If wrong:** the emergency path is either undemonstrable or, worse, reimplemented in the UI as a
+second code path that skips the gate.
+
+**Say:** "Same call, same refusal. The grant is what changes the outcome, and it says so."
+
+### 47. A grant's clock is the real one, even when the page is reasoning about another instant
+
+**Chose:** the dashboard can evaluate any instant, but an override's remaining time is measured
+against the system clock, and the page says so when the two differ.
+
+**Why:** the evaluated instant is a hypothesis; a grant is a real thing with a real expiry. Mixing
+them produced "expires in -74.8 h", which is the sort of output that makes someone stop trusting
+every other number on the page.
+
+**If wrong:** the most safety-critical number in the interface is nonsense in exactly the mode
+someone would use to plan.
+
+**Say:** "Two different clocks were on screen. One is a what-if and one is a countdown, so they are
+labelled and measured separately."
+
+### 48. A demo script that drives the real API
+
+**Chose:** `tools/demo-data.sh` produces the audit trail by making the same calls the dashboard
+makes, and finds its windows by asking the engine which ones are frozen rather than hard-coding
+dates.
+
+**Why:** a fixture inserted straight into the database would prove nothing and would rot the moment
+the calendar moved. Driving the API means the demo is an integration test with nice output, and it
+keeps working across a season change.
+
+**If wrong:** the demo data shows a trail the application could not actually have produced.
+
+**Say:** "It is the real flow, so it is also a smoke test. It found a bug the first time I ran it."

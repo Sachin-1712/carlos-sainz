@@ -48,6 +48,7 @@ var season = builder.Configuration.GetValue("Freeze:Season", DateTime.UtcNow.Yea
 var connectionString = builder.Configuration.GetConnectionString("Freeze") ?? "Data Source=freeze.db";
 
 builder.Services.AddSingleton(new SeasonSettings(season));
+builder.Services.AddSingleton(new SeedPathProvider(builder.Environment.ContentRootPath));
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddDbContext<FreezeDbContext>(options => options.UseFreezeDefaults(connectionString));
 
@@ -92,7 +93,7 @@ builder.Services.AddHttpClient<JolpicaCalendarProvider>(client =>
 
 builder.Services.AddScoped<IRaceCalendarProvider>(sp => new FallbackCalendarProvider(
     sp.GetRequiredService<JolpicaCalendarProvider>(),
-    new SeedCalendarProvider(SeedPaths.Calendar(builder.Environment.ContentRootPath)),
+    new SeedCalendarProvider(sp.GetRequiredService<SeedPathProvider>().CalendarPath),
     sp.GetRequiredService<ILogger<FallbackCalendarProvider>>()));
 
 builder.Services.AddScoped<CalendarSyncService>(sp => new CalendarSyncService(
@@ -154,6 +155,20 @@ if (!app.Environment.IsEnvironment("Testing"))
 
 app.Run();
 
+/// <summary>Where the bundled seed files live, resolved once and shared.</summary>
+public sealed class SeedPathProvider
+{
+    public SeedPathProvider(string contentRoot)
+    {
+        CalendarPath = SeedPaths.Calendar(contentRoot);
+        ServicesPath = SeedPaths.Services(contentRoot);
+    }
+
+    public string CalendarPath { get; }
+
+    public string ServicesPath { get; }
+}
+
 internal static class SeedPaths
 {
     public static string Calendar(string contentRoot) => Resolve(contentRoot, "calendar-2026.json");
@@ -184,7 +199,7 @@ internal static class StartupTasks
 
         await db.Database.MigrateAsync();
 
-        var servicesPath = SeedPaths.Services(app.Environment.ContentRootPath);
+        var servicesPath = scope.ServiceProvider.GetRequiredService<SeedPathProvider>().ServicesPath;
 
         if (File.Exists(servicesPath) && !await db.Services.AnyAsync())
         {
@@ -203,6 +218,38 @@ internal static class StartupTasks
         }
 
         await ReportCompletenessAsync(scope, logger, season);
+        await ReportSeedDriftAsync(scope, logger, season);
+    }
+
+    /// <summary>
+    /// Says loudly at startup when the bundled seed no longer matches reality.
+    /// </summary>
+    /// <remarks>
+    /// A stale seed is not an inert file. When upstream is unreachable the engine falls back to it
+    /// and computes freeze windows for a season that is not happening, which is the same failure as
+    /// a missing round except it looks fine.
+    /// </remarks>
+    private static async Task ReportSeedDriftAsync(IServiceScope scope, ILogger logger, int season)
+    {
+        var db = scope.ServiceProvider.GetRequiredService<FreezeDbContext>();
+        var seeds = scope.ServiceProvider.GetRequiredService<SeedPathProvider>();
+        var report = await SeedDriftCheck.InspectAsync(db, seeds.CalendarPath, season);
+
+        if (report.HasDrifted)
+        {
+            logger.LogWarning(
+                "SEED OUT OF DATE for {Season}: {Problem}", season, report.Problem);
+        }
+        else if (report.Problem is not null)
+        {
+            logger.LogInformation("Seed check for {Season}: {Problem}", season, report.Problem);
+        }
+        else
+        {
+            logger.LogInformation(
+                "Seed for {Season} matches the last verified sync ({Rounds} rounds).",
+                season, report.SeedRoundCount);
+        }
     }
 
     /// <summary>

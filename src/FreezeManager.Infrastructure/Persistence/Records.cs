@@ -157,6 +157,16 @@ public sealed class CalendarSyncRunRecord
     /// missing?" can be answered later, not only in the second after a sync.
     /// </summary>
     public string? SkippedRoundsJson { get; set; }
+
+    /// <summary>
+    /// Active rounds in the season after this sync. Recorded so the bundled seed can be checked
+    /// against the last sync that came from a published source: if they disagree, the fallback
+    /// calendar is describing a season that no longer exists.
+    /// </summary>
+    public int StoredRoundCount { get; set; }
+
+    /// <summary>True when this sync's data came from the live upstream rather than the seed.</summary>
+    public bool FromPublishedSource { get; set; }
 }
 
 public sealed class ChangeRequestRecord

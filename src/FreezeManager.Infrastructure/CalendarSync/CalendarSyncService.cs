@@ -107,6 +107,11 @@ public sealed class CalendarSyncService
         run.SkippedRoundsJson = fetched.SkippedRounds.Count == 0
             ? null
             : System.Text.Json.JsonSerializer.Serialize(fetched.SkippedRounds);
+
+        run.FromPublishedSource = fetched.Source == CalendarSource.LiveUpstream;
+        run.StoredRoundCount = await _db.RaceEvents.CountAsync(
+            e => e.Season == season && e.Status != Domain.Calendar.EventStatus.Cancelled,
+            cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation(

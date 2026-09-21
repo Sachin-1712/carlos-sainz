@@ -75,4 +75,47 @@ public class CalendarSyncApiTests : IClassFixture<FreezeApiFactory>
         Assert.True(body.TryGetProperty("skippedRounds", out _));
         Assert.True(body.TryGetProperty("unmappedCircuitIds", out _));
     }
+
+    [Fact]
+    public async Task The_seed_can_be_regenerated_from_the_stored_calendar()
+    {
+        // The seed stopped being hand-maintained because a hand-maintained file drifts from the
+        // season the moment it changes. Regenerating it is one request.
+        var response = await _client.GetAsync("/api/calendar/2026/seed-export");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
+
+        var body = await response.ReadJsonAsync();
+        Assert.Equal(2026, body.GetProperty("season").GetInt32());
+        Assert.NotEmpty(body.GetProperty("events").EnumerateArray());
+
+        // The export has to reload, or it is not a fallback.
+        var round = body.GetProperty("events").EnumerateArray().First();
+        Assert.True(round.TryGetProperty("sessions", out var sessions));
+        Assert.NotEmpty(sessions.EnumerateArray());
+    }
+
+    [Fact]
+    public async Task Exporting_a_season_with_nothing_stored_is_a_not_found()
+    {
+        Assert.Equal(
+            HttpStatusCode.NotFound,
+            (await _client.GetAsync("/api/calendar/2099/seed-export")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Seed_drift_is_reported_against_the_last_verified_sync()
+    {
+        var response = await _client.GetAsync("/api/calendar/2026/seed-drift");
+
+        // Either clean or drifted is a valid answer; what matters is that it is answerable at all
+        // and says which, rather than leaving a stale fallback to be discovered during an outage.
+        Assert.Contains(response.StatusCode, new[] { HttpStatusCode.OK, HttpStatusCode.Conflict });
+
+        var body = await response.ReadJsonAsync();
+        Assert.True(body.TryGetProperty("hasDrifted", out _));
+        Assert.True(body.TryGetProperty("seedRoundCount", out _));
+        Assert.True(body.TryGetProperty("lastVerifiedRoundCount", out _));
+    }
 }

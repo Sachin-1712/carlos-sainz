@@ -3,6 +3,7 @@
 @rendermode InteractiveServer
 @inject FreezeContextFactory ContextFactory
 @inject ChangeRequestService Changes
+@inject OverrideService Overrides
 @inject CalendarRepository Calendar
 @inject SeasonSettings Season
 @inject TimeProvider Clock
@@ -120,7 +121,7 @@
             </p>
 
             <div class="card">
-                @if (_nextOpen is not null && _lastBlocked is null)
+                @if (_nextOpen is not null && _lastBlocked is null && _overrideOutcome is null)
                 {
                     <div class="callout open">
                         <h3>Next open window for the selected services</h3>
@@ -128,7 +129,7 @@
                         <button type="button" class="secondary" @onclick="UseSuggestedWindow">Use this window</button>
                     </div>
                 }
-                else if (_nextOpen is null && _lastBlocked is null && _selectedServices.Count > 0)
+                else if (_nextOpen is null && _lastBlocked is null && _overrideOutcome is null && _selectedServices.Count > 0)
                 {
                     <div class="callout warn">
                         <h3>No open window found</h3>
@@ -151,6 +152,164 @@
                                 @Format(_lastBlocked.SuggestedOpenWindow.EndUtc)
                             </p>
                             <button type="button" class="secondary" @onclick="UseBlockedSuggestion">Move to that window</button>
+                        }
+
+                        @if (_blockedReference is not null && _blockedType == ChangeType.Emergency && !_showOverrideForm && _override is null)
+                        {
+                            <p class="reason" style="margin-top:10px">
+                                This was raised as an emergency. Rescheduling is still the right answer when the
+                                incident can wait; when it cannot, an override is the only way through, and it
+                                costs an incident reference, a justification and the approval chain below.
+                            </p>
+                            <button type="button" @onclick="StartOverride">Request emergency override</button>
+                        }
+                        else if (_blockedReference is not null && _blockedType != ChangeType.Emergency && _override is null)
+                        {
+                            <p class="reason" style="margin-top:10px">
+                                Only an emergency change can be overridden. Set Type to Emergency and submit again
+                                if this is genuinely driven by a live incident.
+                            </p>
+                        }
+                    </div>
+                }
+
+                @if (_showOverrideForm && _override is null)
+                {
+                    <div class="callout warn">
+                        <h3>Request an emergency override for @_blockedReference</h3>
+                        <p>
+                            Required chain for this change: <strong>@string.Join(", ", _overrideChain)</strong>.
+                            A grant expires on its own, so it cannot become a standing exemption.
+                        </p>
+
+                        <div class="field">
+                            <label for="inc">Linked incident</label>
+                            <input id="inc" type="text" placeholder="INC-4471" @bind="_incidentReference" />
+                        </div>
+                        <div class="field">
+                            <label for="just">Justification (at least 30 characters)</label>
+                            <textarea id="just" @bind="_justification"></textarea>
+                        </div>
+                        <div class="checks" style="margin-bottom:10px">
+                            <label>
+                                <input type="checkbox" @bind="_breakGlass" />
+                                Break glass — one approver from head of IT or trackside IT lead, and a
+                                mandatory retrospective within 24 hours
+                            </label>
+                        </div>
+
+                        @if (_overrideProblems.Count > 0)
+                        {
+                            @foreach (var problem in _overrideProblems)
+                            {
+                                <p class="reason">@problem</p>
+                            }
+                        }
+
+                        <button type="button" @onclick="RequestOverrideAsync" disabled="@_busy">Request override</button>
+                        <button type="button" class="secondary" @onclick="() => _showOverrideForm = false">Cancel</button>
+                    </div>
+                }
+
+                @if (_override is not null)
+                {
+                    <div class="callout @(_override.State == OverrideState.Granted ? "open" : "warn")">
+                        <h3>
+                            Override @_override.State.ToString().ToLowerInvariant()
+                            for @_blockedReference (@_override.IncidentReference)
+                        </h3>
+
+                        @if (_override.IsBreakGlass)
+                        {
+                            <p><strong>Break glass.</strong> One accountable approver, retrospective due within 24 hours.</p>
+                        }
+
+                        <table style="margin:8px 0">
+                            <thead>
+                                <tr><th>Role</th><th>Decision</th><th></th></tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var role in _overrideChain)
+                                {
+                                    var decided = _override.Approvals.FirstOrDefault(a => a.Role.ToString() == role);
+                                    <tr>
+                                        <td>@role</td>
+                                        <td>
+                                            @if (decided is null)
+                                            {
+                                                <span class="pill neutral">Awaiting</span>
+                                            }
+                                            else if (decided.IsApproval)
+                                            {
+                                                <span class="pill open"><span class="ic">&#9679;</span> Approved</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="pill frozen"><span class="ic">&#9632;</span> Rejected</span>
+                                            }
+                                        </td>
+                                        <td>
+                                            @if (decided is null && _override.State == OverrideState.Requested)
+                                            {
+                                                <button type="button" class="secondary"
+                                                        @onclick="() => DecideOverrideAsync(role, ApprovalDecision.Approved)"
+                                                        disabled="@_busy">
+                                                    Approve as @role
+                                                </button>
+                                                <button type="button" class="secondary"
+                                                        @onclick="() => DecideOverrideAsync(role, ApprovalDecision.Rejected)"
+                                                        disabled="@_busy">
+                                                    Reject
+                                                </button>
+                                            }
+                                            else if (decided is not null)
+                                            {
+                                                <span class="muted">@decided.Approver</span>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+
+                        @if (_override.State == OverrideState.Granted)
+                        {
+                            <p class="mono">
+                                Granted @Format(_override.GrantedAtUtc!.Value) &middot;
+                                <strong>expires @Format(_override.ExpiresAtUtc!.Value)</strong>
+                                (@Round((_override.ExpiresAtUtc.Value - Clock.GetUtcNow()).TotalHours) h left)
+                            </p>
+                            @if (_atOverride)
+                            {
+                                <p class="muted">
+                                    The grant runs on the real clock, not the instant this page is evaluating.
+                                </p>
+                            }
+                            @if (_override.RetrospectiveDueAtUtc is not null)
+                            {
+                                <p class="mono">Retrospective due @Format(_override.RetrospectiveDueAtUtc.Value)</p>
+                            }
+                            <button type="button" @onclick="SubmitUnderOverrideAsync" disabled="@_busy">
+                                Submit under override
+                            </button>
+                        }
+                        else if (_override.State == OverrideState.Rejected)
+                        {
+                            <p>An approver rejected this override. The change stays blocked.</p>
+                        }
+                    </div>
+                }
+
+                @if (_overrideOutcome is not null)
+                {
+                    <div class="callout open">
+                        <h3>@_overrideOutcome</h3>
+                        @if (_overrideUsed is not null)
+                        {
+                            <p class="mono">
+                                Proceeded under override @_overrideUsed.IncidentReference &middot;
+                                grant expires @Format(_overrideUsed.ExpiresAtUtc!.Value)
+                            </p>
                         }
                     </div>
                 }
@@ -310,6 +469,20 @@
     private string? _lastSuccess;
     private List<string> _problems = new();
 
+    // Emergency override state. The reference is kept so the override attaches to the change that
+    // was actually refused, rather than to whatever the form says by the time someone clicks.
+    private string? _blockedReference;
+    private ChangeType _blockedType;
+    private bool _showOverrideForm;
+    private string _incidentReference = string.Empty;
+    private string _justification = string.Empty;
+    private bool _breakGlass;
+    private FreezeOverride? _override;
+    private IReadOnlyList<string> _overrideChain = Array.Empty<string>();
+    private List<string> _overrideProblems = new();
+    private string? _overrideOutcome;
+    private FreezeOverride? _overrideUsed;
+
     protected override async Task OnInitializedAsync()
     {
         _now = Clock.GetUtcNow();
@@ -325,7 +498,7 @@
         }
 
         _asAt = _now.UtcDateTime;
-        _start = _now.AddDays(1).UtcDateTime;
+        _start = _now.UtcDateTime;
         _end = _start.AddHours(2);
 
         await LoadAsync();
@@ -336,6 +509,7 @@
     {
         _now = new DateTimeOffset(DateTime.SpecifyKind(_asAt, DateTimeKind.Utc));
         _atOverride = true;
+        MoveFormWindowToEvaluatedInstant();
         await LoadAsync();
         await RefreshSuggestionAsync();
     }
@@ -345,8 +519,24 @@
         _now = Clock.GetUtcNow();
         _asAt = _now.UtcDateTime;
         _atOverride = false;
+        MoveFormWindowToEvaluatedInstant();
         await LoadAsync();
         await RefreshSuggestionAsync();
+    }
+
+    /// <summary>
+    /// Keeps the form's window anchored to the instant the page is reasoning about.
+    /// </summary>
+    /// <remarks>
+    /// Jumping the page to a date and then finding the form still defaulted to today makes the two
+    /// halves of the page disagree about what "now" means, which is exactly the confusion the
+    /// whole project exists to avoid. The duration the user chose is preserved.
+    /// </remarks>
+    private void MoveFormWindowToEvaluatedInstant()
+    {
+        var duration = _end > _start ? _end - _start : TimeSpan.FromHours(2);
+        _start = _now.UtcDateTime;
+        _end = _start.Add(duration);
     }
 
     private async Task LoadAsync()
@@ -522,12 +712,27 @@
         _lastBlocked = null;
     }
 
+    private void ResetOverrideState()
+    {
+        _showOverrideForm = false;
+        _override = null;
+        _overrideChain = Array.Empty<string>();
+        _overrideProblems = new List<string>();
+        _overrideOutcome = null;
+        _overrideUsed = null;
+        _blockedReference = null;
+        _incidentReference = string.Empty;
+        _justification = string.Empty;
+        _breakGlass = false;
+    }
+
     private async Task SubmitAsync()
     {
         _busy = true;
         _problems = new List<string>();
         _lastBlocked = null;
         _lastSuccess = null;
+        ResetOverrideState();
 
         try
         {
@@ -567,6 +772,8 @@
             {
                 // The draft stays: it is a real change that needs a different window, not a mistake.
                 _lastBlocked = submitted.GateDecision;
+                _blockedReference = reference;
+                _blockedType = _type;
             }
             else if (submitted.Succeeded)
             {
@@ -579,6 +786,140 @@
 
             await LoadAsync();
             await RefreshSuggestionAsync();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task StartOverride()
+    {
+        _showOverrideForm = true;
+        _overrideProblems = new List<string>();
+        _overrideChain = await ChainForBlockedChangeAsync();
+    }
+
+    /// <summary>The roles an override on the blocked change would need, in the order they are shown.</summary>
+    private async Task<IReadOnlyList<string>> ChainForBlockedChangeAsync()
+    {
+        if (_blockedReference is null)
+        {
+            return Array.Empty<string>();
+        }
+
+        var change = await Changes.GetAsync(_blockedReference);
+
+        if (change is null)
+        {
+            return Array.Empty<string>();
+        }
+
+        var requirement = await Changes.RequirementForAsync(change);
+
+        // Break-glass narrows the chain to the roles that may carry a grant alone, so the table
+        // shows what will actually be asked for rather than the full chain it replaces.
+        var roles = _breakGlass
+            ? ApprovalRequirement.BreakGlassRoles
+            : (requirement.IsPreApproved ? new[] { ApprovalRole.HeadOfIt } : requirement.Roles.ToArray());
+
+        return roles.Select(r => r.ToString()).ToArray();
+    }
+
+    private async Task RequestOverrideAsync()
+    {
+        if (_blockedReference is null)
+        {
+            return;
+        }
+
+        _busy = true;
+        _overrideProblems = new List<string>();
+
+        try
+        {
+            var result = await Overrides.RequestAsync(
+                _blockedReference, _incidentReference, _justification, "s.sindhe", null, _breakGlass);
+
+            if (!result.Succeeded)
+            {
+                _overrideProblems.AddRange(result.Problems);
+                return;
+            }
+
+            _override = result.Override;
+            _overrideChain = await ChainForBlockedChangeAsync();
+            _showOverrideForm = false;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DecideOverrideAsync(string role, ApprovalDecision decision)
+    {
+        if (_blockedReference is null || !Enum.TryParse<ApprovalRole>(role, out var parsed))
+        {
+            return;
+        }
+
+        _busy = true;
+        _overrideProblems = new List<string>();
+
+        try
+        {
+            var result = await Overrides.ApproveAsync(
+                _blockedReference, parsed, $"{role}.person", decision, null);
+
+            if (!result.Succeeded)
+            {
+                _overrideProblems.AddRange(result.Problems);
+                return;
+            }
+
+            _override = result.Override;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    /// <summary>
+    /// Retries the submission that was refused, now that a grant is in force.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately the same call as the ordinary submit. The override is not a different code
+    /// path through the gate -- the gate still refuses, and the grant is what carries the change
+    /// past it, which is why the result reports both facts.
+    /// </remarks>
+    private async Task SubmitUnderOverrideAsync()
+    {
+        if (_blockedReference is null)
+        {
+            return;
+        }
+
+        _busy = true;
+
+        try
+        {
+            var result = await Changes.TransitionAsync(_blockedReference, ChangeState.Submitted);
+
+            if (result.Succeeded)
+            {
+                _overrideUsed = result.UsedOverride;
+                _overrideOutcome = $"{_blockedReference} submitted under override.";
+                _lastBlocked = null;
+                _override = null;
+            }
+            else
+            {
+                _overrideProblems.AddRange(result.Problems);
+            }
+
+            await LoadAsync();
         }
         finally
         {

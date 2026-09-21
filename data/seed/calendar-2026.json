@@ -1,6 +1,6 @@
 {
   "season": 2026,
-  "disclaimer": "UNVERIFIED. Dates were written from memory and session times follow a standard template; none of it has been checked against the official F1 calendar. Every event is marked verified: false. Use a live sync, or verify each row by hand before relying on it.",
+  "disclaimer": "STALE AND UNVERIFIED. Written from memory before the 2026 calendar changed, and it does not match the season that actually ran: two rounds were cancelled (marked Cancelled here) and a replacement round is missing entirely, so a cold start from this file would leave that weekend unfrozen. Regenerate it from a verified sync -- GET /api/calendar/2026/seed-export > data/seed/calendar-2026.json -- which marks every row verified. The startup seed-drift check and GET /api/calendar/2026/seed-drift both report this.",
   "generatedBy": "tools/generate-seed-calendar.py",
   "events": [
     {
@@ -121,7 +121,7 @@
       "country": "Bahrain",
       "localTimeZoneId": "Asia/Bahrain",
       "format": "Conventional",
-      "status": "Scheduled",
+      "status": "Cancelled",
       "verified": false,
       "sessions": [
         {
@@ -158,7 +158,7 @@
       "country": "Saudi Arabia",
       "localTimeZoneId": "Asia/Riyadh",
       "format": "Conventional",
-      "status": "Scheduled",
+      "status": "Cancelled",
       "verified": false,
       "sessions": [
         {
