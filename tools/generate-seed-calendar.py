@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Generates data/seed/calendar-2026.json.
+"""Generates data/seed/calendar-2026.json. SUPERSEDED -- kept only for provenance.
+
+The seed is now an export of a verified live sync:
+
+    curl -s localhost:5000/api/calendar/2026/seed-export > data/seed/calendar-2026.json
+
+which is implemented by SeedExporter and marks every row verified. This script is what produced
+the seed currently committed, and it is kept so that file's "generatedBy" field resolves to
+something real. Do not reach for it to fix a stale seed -- re-sync and export instead.
 
 EVERY DATE AND TIME HERE IS UNVERIFIED. The table below was written from memory, not from the
 official calendar, and the session times are a standard template, not published timetables.

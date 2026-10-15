@@ -77,6 +77,29 @@ curl -s localhost:5000/api/calendar/2026/seed-export > data/seed/calendar-2026.j
 Drift between the seed and the last verified sync is checked at startup and at
 `GET /api/calendar/{season}/seed-drift`.
 
+`tools/generate-seed-calendar.py` is the script that produced the seed currently committed, back
+when the file was hand-maintained. It is superseded by the export above and kept only so the
+seed's `generatedBy` field resolves to something real.
+
+### What a cold start with no network does
+
+Worth knowing, because it is the path a reviewer on a locked-down machine will take. The live
+provider fails, `FallbackCalendarProvider` uses the seed and records why, every seeded round is
+reported as unverified in the sync message, and the seed-drift check says there is nothing to
+compare against yet because no published-source sync has run. The app comes up, the dashboard
+works, and nothing silently claims the dates are real:
+
+```
+warn: FallbackCalendarProvider  Calendar sync for season 2026 from Seed file (calendar-2026.json):
+      24 added, 0 updated, 0 pinned, 25 warnings, unmapped circuits: none, rounds dropped: none.
+info: Startup  Seed check for 2026: No sync from a published source has run yet, so there is
+      nothing to compare the seed against.
+```
+
+`tools/demo-data.sh` works on that cold start too — it asks the engine which windows are frozen
+rather than hard-coding dates, so it produces its refusal, its reschedule and its override against
+whatever calendar the app managed to load.
+
 ## Test library choices
 
 Tests use xUnit with its built-in assertions and no third-party assertion library, to keep the test

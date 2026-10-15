@@ -715,3 +715,38 @@ keeps working across a season change.
 **If wrong:** the demo data shows a trail the application could not actually have produced.
 
 **Say:** "It is the real flow, so it is also a smoke test. It found a bug the first time I ran it."
+
+---
+
+## Phase 6 — documentation
+
+### 49. The README is a 60-second skim; the reference material lives in `docs/`
+
+**Chose:** the README opens with four lines (problem, what it does, the twist, proof) and a tech
+stack, keeps only what earns a first read, and sends the endpoint table, the build and migration
+commands and the ingestion detail to `docs/api.md` and `docs/development.md`.
+
+**Why:** the first reader of a portfolio repository is deciding whether to keep reading, not
+looking up a route. A 400-line README with the endpoint table in the middle serves neither that
+reader nor the one who has already cloned it. Splitting them means neither audience has to skip
+the other's half.
+
+**If wrong:** the detail is one click further away for someone who wanted it on the page.
+
+**Say:** "Two readers, two documents. The README answers 'what is this and is it any good'; the
+docs answer 'how do I run it'."
+
+### 50. The freeze offsets are documented as proposals, not policy
+
+**Chose:** `FreezePolicySet.Default` ships with plausible numbers, the README explains what each one
+is anchored to, and both say explicitly that they are not ratified.
+
+**Why:** the offsets are the only part of the system that is a judgement call rather than a
+derivation from the calendar, and the owner of a real service — not the author of the engine — is
+the person who gets to make it. Presenting a guess as a decided number is the kind of thing that
+survives into production unexamined.
+
+**If wrong:** a reader assumes the numbers carry authority they do not have.
+
+**Say:** "Everything else follows from the calendar. These three numbers are somebody's call, so
+they are data with a note on them, and the way to check them is to count overrides."

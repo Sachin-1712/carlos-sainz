@@ -9,6 +9,14 @@ Any field holding a period when work is **blocked** says `freezeWindow`; any fie
 when work is **allowed** says `openWindow`. The domain types use the same names, so there is no
 translation step between them where a mistake could hide.
 
+## Where to start
+
+| | |
+| --- | --- |
+| `GET /` | The dashboard. |
+| `GET /scalar/v1` | This list, browsable, with schemas and a try-it button. |
+| `GET /api` | Service index: season, where the docs are, the endpoints worth knowing. |
+
 ## Changes
 
 | | |

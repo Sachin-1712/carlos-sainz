@@ -1,0 +1,62 @@
+# Formatting conventions for this repository. Descriptive, not enforced at build time:
+# EnforceCodeStyleInBuild is off, so these guide an editor rather than failing CI. The things
+# that do fail the build are compiler and analyser warnings (see Directory.Build.props).
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.{cs,csproj,props,targets}]
+indent_size = 4
+
+[*.cs]
+# No max_line_length: most of the code wraps near 100, but table-shaped code (transition tables,
+# test calendars) reads better wide, and a limit the code does not keep is noise.
+
+# Namespaces, usings, braces
+csharp_style_namespace_declarations = file_scoped:suggestion
+dotnet_sort_system_directives_first = true
+csharp_using_directive_placement = outside_namespace:suggestion
+csharp_prefer_braces = true:suggestion
+
+# Prefer the expression forms used throughout the codebase
+csharp_style_expression_bodied_properties = true:suggestion
+csharp_style_expression_bodied_accessors = true:suggestion
+csharp_style_prefer_switch_expression = true:suggestion
+csharp_style_prefer_pattern_matching = true:suggestion
+csharp_style_throw_expression = true:suggestion
+dotnet_style_prefer_conditional_expression_over_assignment = true:suggestion
+
+# Immutability is the default in the domain
+dotnet_style_readonly_field = true:suggestion
+csharp_prefer_static_local_function = true:suggestion
+
+# Explicit types for primitives, var where the type is on the line already
+csharp_style_var_for_built_in_types = false:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+
+# Naming: interfaces I-prefixed, everything public PascalCase
+dotnet_naming_rule.interfaces_start_with_i.severity = suggestion
+dotnet_naming_rule.interfaces_start_with_i.symbols = interface_symbols
+dotnet_naming_rule.interfaces_start_with_i.style = i_prefixed
+dotnet_naming_symbols.interface_symbols.applicable_kinds = interface
+dotnet_naming_style.i_prefixed.capitalization = pascal_case
+dotnet_naming_style.i_prefixed.required_prefix = I
+
+[*.{json,yml,yaml,md}]
+indent_size = 2
+
+[*.sh]
+indent_size = 2
+
+[*.py]
+indent_size = 4
+
+[*.md]
+trim_trailing_whitespace = false

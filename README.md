@@ -1,6 +1,6 @@
 # Race Weekend Change Freeze Manager
 
-[![CI](https://github.com/Sachin-1712/carlos-sainz/actions/workflows/ci.yml/badge.svg?branch=claude/amazing-hamilton-jqb41y)](https://github.com/Sachin-1712/carlos-sainz/actions/workflows/ci.yml)
+[![CI](https://github.com/Sachin-1712/carlos-sainz/actions/workflows/ci.yml/badge.svg)](https://github.com/Sachin-1712/carlos-sainz/actions/workflows/ci.yml)
 
 **The problem.** A racing team cannot patch its systems whenever it likes — the race calendar
 decides when breaking something is survivable, and the calendar is not negotiable.
@@ -98,19 +98,25 @@ from a verified sync, and the drift between the two is checked at startup and at
 
 ## Why these freeze offsets
 
-<!-- Owner to write. The numbers the engine currently runs with are below; the reasoning is not
-     mine to assert. -->
+<!-- Draft, for the owner to rewrite in their own words. What follows is the reasoning the numbers
+     were chosen from; the numbers themselves are proposals, not ratified policy. -->
 
-*To be written by the service owner.*
+The offsets are the one part of this system that is a judgement rather than a derivation.
+Everything else falls out of the calendar: given the sessions and a policy, the windows are
+arithmetic. The policy itself is somebody's call, so it is worth saying out loud what each number
+is anchored to.
 
-The numbers in `FreezePolicySet.Default` today, which exist so the engine has something to run and
-are **not yet decided**:
+| Tier | Freeze from | Until | What the number is protecting |
+| --- | --- | --- | --- |
+| Trackside | 48 h before the first session | 2 h after parc fermé release | A change that lands later than this cannot be proven on a bench before it is in the car's loop. The freeze has to start before the garage is built, not after. |
+| Race support | 24 h before the first session | 3 h after the race | Systems the garage depends on but does not touch directly. The shorter nose assumes they can be validated remotely; the tail covers the data coming off the car after the chequered flag, which is when the race weekend actually ends. |
+| Corporate | 30 min either side of each session | — | Advisory only, never blocking. Marking every service business-critical is how a freeze process loses credibility and starts getting routed around. |
 
-| Tier | Freeze from | Until |
-| --- | --- | --- |
-| Trackside | 48 h before the first session | 2 h after parc fermé release |
-| Race support | 24 h before the first session | 3 h after the race |
-| Corporate | 30 min before each session (advisory only) | 30 min after |
+Two things follow from that framing. First, these should be set from real numbers — the load-in
+schedule and each service's deployment lead time — not from round figures, which is why they are
+flagged as a placeholder below. Second, the way to tell whether they are right is to count
+overrides: if a tier's emergency overrides cluster in the same part of the weekend, its offset is
+in the wrong place, and the audit log is already keeping the evidence.
 
 They are data, not code — one edit in `FreezePolicySet.cs`, no release.
 
@@ -253,22 +259,52 @@ a window is claimed. Approval sits between them and does not re-run the gate, be
 change agrees to the work, not to the slot. The transitions are a table rather than a chain of
 conditionals, which is why inserting the approval states was an edit to data.
 
-Every design decision is recorded in [`docs/decisions.md`](docs/decisions.md) — 48 entries, each
+Every design decision is recorded in [`docs/decisions.md`](docs/decisions.md) — 50 entries, each
 written as *what was chosen, why, what it would cost to get wrong, and the sentence to open with if
 asked*. The endpoint list is in [`docs/api.md`](docs/api.md); build, migration and ingestion detail
 is in [`docs/development.md`](docs/development.md).
 
 ## How this was built
 
-<!-- Owner to write. -->
+<!-- Draft, for the owner to rewrite in their own words. -->
 
-*To be written.*
+**Domain first.** The freeze engine was written before the database, the HTTP layer and the UI, as
+pure C# with no clock and no I/O. That order is why the engine is a function of
+`(calendar, service tiers, instant)` rather than something that reads the time and a connection
+string — and why the test suite reads as a set of claims about race weekends instead of a pile of
+mocks.
+
+**Six phases, each ending in a review.** Calendar model and engine; persistence and ingestion;
+change lifecycle and the freeze gate; approvals, override and audit chain; dashboard and browsable
+API; documentation. Nothing from a later phase was scaffolded early. Each phase was verified by
+hand on a real machine against the live calendar before the next one started, which is how the
+naming collision between `nextWindow` (next freeze) and `next-window` (next opening) was caught
+while it was still cheap to rename.
+
+**CI as the build gate from the first commit**, with warnings as errors. That setting was added
+after a warning hid for two phases behind an incremental build, which does not re-run analysers: a
+clean build is the only honest warning count.
+
+**Some bugs only a real browser finds.** Static web assets are composed in Development but not in
+Production, so `dotnet run` served a page that rendered and then did nothing. An override's
+remaining time was measured against the dashboard's hypothetical "evaluate at" instant rather than
+the real clock, and reported "expires in -74.8 h". Neither was reachable from a unit test.
+
+**The season changed mid-build**, which was the best test available and not a planned one: two
+rounds cancelled, one reinstated in another country, one race moved to Saturday. The fix was a
+re-sync. The one thing it did break was the hand-written fallback seed, which is why the seed is now
+an export of a verified sync and why the drift between them is checked at startup.
+
+**Decisions were written down as they were made**, not reconstructed afterwards — all 50 of them in
+[`docs/decisions.md`](docs/decisions.md), each with what it would cost to be wrong.
 
 ## Known limits
 
 - **There is no authentication.** Roles are supplied by the caller. Wiring this to real identity is
   the first thing production would need, and is deliberately out of scope.
-- **The tier offsets above are placeholders**, to be set by the service owner.
+- **The tier offsets above are placeholders.** The reasoning behind them is written down, but
+  the numbers themselves need the real load-in schedule and per-service lead times before they are
+  policy rather than proposal.
 - **"Verified" means provenance, not review.** A row is `IsVerified = true` when it came from a
   published source — the live upstream API — and `false` when it did not. It does not mean a person
   has checked it.
@@ -278,3 +314,7 @@ is in [`docs/development.md`](docs/development.md).
   regenerating it from a verified sync is one command
   (`GET /api/calendar/2026/seed-export`). In normal operation the live provider is the source, and
   it is verified against the real API.
+
+---
+
+MIT licensed — see [LICENSE](LICENSE).
